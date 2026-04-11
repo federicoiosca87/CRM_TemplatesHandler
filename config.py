@@ -30,6 +30,7 @@ LANGUAGE_MAPPING = {
     "PY": ["py"],
     "RU": ["ru-ee"],
     "RU_ET": ["ru-ee"],
+    "RU_LV": ["ru-lv"],
     "TR": ["tr"],
     "CA": ["ca"],
 }
@@ -61,6 +62,7 @@ LANGUAGE_NAMES = {
     "PY": "Spanish (Paraguay)",
     "RU": "Russian",
     "RU_ET": "Russian (Estonia)",
+    "RU_LV": "Russian (Latvia)",
     "TR": "Turkish",
     "CA": "Catalan",
 }

@@ -12,6 +12,7 @@ import mimetypes
 import textwrap
 import copy
 import html
+from urllib.request import urlretrieve
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
@@ -37,6 +38,204 @@ import re
 import difflib
 import xml.etree.ElementTree as ET
 from collections import Counter
+
+try:
+    from langdetect import detect as langdetect_detect, detect_langs as langdetect_detect_langs, LangDetectException
+except ImportError:
+    langdetect_detect = None
+    langdetect_detect_langs = None
+    LangDetectException = Exception
+
+
+BETSSON_LOGO_URL = "https://www.betsson.com/wp-content/uploads/2024/09/white-newbetssonlogo-1.svg"
+BETSSON_FAVICON_URL = "https://www.betsson.com/assets/favicons/favicon.ico"
+BETSSON_FONTS_BASE = "https://www.betsson.com/wp-content/themes/betsson-theme/assets/fonts"
+
+
+# Black SVG favicon: Betsson brand marker shape in #1F1F1F with white b
+_BLACK_FAVICON_SVG = """<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>
+  <rect width='32' height='32' rx='7' fill='#1F1F1F'/>
+  <text x='16' y='25' font-family='Arial Black,Arial,sans-serif' font-size='21'
+        font-weight='900' fill='white' text-anchor='middle'>b</text>
+</svg>"""
+
+
+def ensure_brand_assets() -> tuple[Path | None, Path | None, Path | None]:
+    """Best-effort download of Betsson brand assets for local use."""
+    assets_dir = Path(__file__).parent / "images" / "brand"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+
+    logo_path = assets_dir / "betsson-logo.svg"
+    favicon_path = assets_dir / "betsson-favicon.ico"
+    black_favicon_path = assets_dir / "betsson-favicon-black.svg"
+
+    try:
+        if not logo_path.exists():
+            urlretrieve(BETSSON_LOGO_URL, str(logo_path))
+    except Exception:
+        logo_path = None
+
+    try:
+        if not favicon_path.exists():
+            urlretrieve(BETSSON_FAVICON_URL, str(favicon_path))
+    except Exception:
+        favicon_path = None
+
+    if not black_favicon_path.exists():
+        black_favicon_path.write_text(_BLACK_FAVICON_SVG, encoding="utf-8")
+
+    return logo_path, favicon_path, black_favicon_path
+
+
+ENGLISH_HINT_WORDS = {
+    "the", "and", "for", "with", "your", "you", "when", "place", "placing", "claim",
+    "offer", "free", "cash", "spins", "sportsbook", "chance", "perfect", "try", "get",
+}
+
+
+def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict:
+    """
+    Detect if document content language matches expected language from filename.
+    
+    Uses langdetect to sample actual content and compare against the expected
+    language_code from the filename. Treats detection as a heuristic hint —
+    short text and similar language pairs (ES/PT, NB/SV) may cause false positives.
+    
+    Args:
+        parsed_docs: List of ParsedDocument objects with language_code and content fields
+        
+    Returns:
+        Dict keyed by language_code with mismatch detection results.
+        Example: {
+            "EN": {"detected_language": "en", "mismatch": False},
+            "ES": {"detected_language": "en", "mismatch": True}
+        }
+    """
+    if langdetect_detect is None:
+        return {doc.language_code: {"detected_language": None, "mismatch": False} for doc in parsed_docs}
+
+    def clean_sample(text: str) -> str:
+        text = re.sub(r"\{[^}]+\}", " ", text)
+        text = re.sub(r"%+[^%]+%+", " ", text)
+        text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+        text = re.sub(r"[^A-Za-z\u00C0-\u024F\s]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def evaluate_chunk(text: str, expected_langs: set[str]) -> dict:
+        cleaned = clean_sample(text)
+        tokens = [token.lower() for token in cleaned.split() if len(token) > 2]
+        english_hits = sum(1 for token in tokens if token in ENGLISH_HINT_WORDS)
+        english_ratio = english_hits / max(len(tokens), 1)
+
+        if not tokens or len(tokens) < 8:
+            if "en" not in expected_langs and english_hits >= 3:
+                return {
+                    "detected_language": "en",
+                    "mismatch": True,
+                    "reason": "english_hint_short_sample",
+                    "sample_length": len(cleaned),
+                    "english_probability": 0.0,
+                    "english_hint_ratio": round(english_ratio, 4),
+                }
+            return {
+                "detected_language": None,
+                "mismatch": False,
+                "reason": "insufficient_sample",
+                "sample_length": len(cleaned),
+                "english_probability": 0.0,
+                "english_hint_ratio": round(english_ratio, 4),
+            }
+
+        try:
+            text_for_detection = cleaned[:3000]
+            detected_lang = langdetect_detect(text_for_detection).lower()[:2]
+
+            lang_probabilities = {}
+            if langdetect_detect_langs is not None:
+                try:
+                    lang_probabilities = {
+                        candidate.lang.lower()[:2]: float(candidate.prob)
+                        for candidate in langdetect_detect_langs(text_for_detection)
+                    }
+                except Exception:
+                    lang_probabilities = {}
+
+            english_prob = lang_probabilities.get("en", 0.0)
+            mismatch = detected_lang not in expected_langs
+
+            if "en" not in expected_langs and (english_prob >= 0.35 or english_ratio >= 0.18):
+                mismatch = True
+                if english_prob >= 0.35:
+                    detected_lang = "en"
+
+            return {
+                "detected_language": detected_lang,
+                "mismatch": mismatch,
+                "reason": "chunk_eval",
+                "sample_length": len(cleaned),
+                "english_probability": round(english_prob, 4),
+                "english_hint_ratio": round(english_ratio, 4),
+            }
+        except LangDetectException:
+            return {
+                "detected_language": None,
+                "mismatch": False,
+                "reason": "detection_failed",
+                "sample_length": len(cleaned),
+                "english_probability": 0.0,
+                "english_hint_ratio": round(english_ratio, 4),
+            }
+
+    results = {}
+
+    for doc in parsed_docs:
+        language_code = doc.language_code
+        if language_code in results:
+            continue
+
+        expected_langs = {language_code.lower()[:2]}
+        expected_langs.update(code.lower()[:2] for code in LANGUAGE_MAPPING.get(language_code.upper(), []))
+
+        chunks: list[str] = []
+
+        for section in [doc.launch_oms, doc.reminder_oms, doc.reward_oms]:
+            if section and hasattr(section, "templates"):
+                for template in section.templates:
+                    chunks.append(" ".join(part for part in [template.title, template.body, template.cta, template.cta_mobile] if part))
+
+        for section in [doc.launch_sms, doc.reminder_sms]:
+            if section and hasattr(section, "templates"):
+                for template in section.templates:
+                    if template.body:
+                        chunks.append(template.body)
+
+        if getattr(doc, "raw_paragraphs", None):
+            chunks.extend(doc.raw_paragraphs)
+
+        chunk_results = [evaluate_chunk(chunk, expected_langs) for chunk in chunks if chunk and chunk.strip()]
+        mismatches = [item for item in chunk_results if item.get("mismatch")]
+
+        if mismatches:
+            winner = max(mismatches, key=lambda item: (item.get("english_probability", 0.0), item.get("english_hint_ratio", 0.0), item.get("sample_length", 0)))
+            winner["reason"] = "chunk_mismatch"
+            results[language_code] = winner
+            continue
+
+        if chunk_results:
+            best_non_mismatch = max(chunk_results, key=lambda item: item.get("sample_length", 0))
+            results[language_code] = best_non_mismatch
+            continue
+
+        results[language_code] = {
+            "detected_language": None,
+            "mismatch": False,
+            "reason": "no_content",
+            "sample_length": 0,
+            "english_probability": 0.0,
+            "english_hint_ratio": 0.0,
+        }
+
+    return results
 
 
 # =============================================================================
@@ -1046,6 +1245,56 @@ def check_missing_content(template_type: str, title: str = None, body: str = Non
     return warnings
 
 
+def infer_oms_image_tags(display_name: str, cms_key: str) -> list[str]:
+    """Infer lightweight UX tags for fixed OMS image options."""
+    tags: list[str] = []
+    name = (display_name or "").lower()
+    key = (cms_key or "").lower()
+
+    if "live casino" in name:
+        tags.append("Live Casino")
+    elif "sportsbook" in name or "_sb" in key:
+        tags.append("Sportsbook")
+    elif "casino" in name or "_casino" in key:
+        tags.append("Casino")
+
+    if "bonus" in name:
+        tags.append("Bonus")
+    if "cash" in name:
+        tags.append("Cash")
+    if "free spin" in name or "freespin" in key:
+        tags.append("Free Spin")
+    if "free bet" in name:
+        tags.append("Free Bet")
+    if "risk free" in name:
+        tags.append("Risk Free")
+    if "money" in name:
+        tags.append("Money")
+    if "default" in name:
+        tags.append("Fallback")
+
+    unique_tags: list[str] = []
+    for tag in tags:
+        if tag not in unique_tags:
+            unique_tags.append(tag)
+
+    return unique_tags
+
+
+def format_oms_image_option(display_name: str) -> str:
+    """Create richer dropdown labels while keeping source image names unchanged."""
+    image_tuple = OMS_IMAGES.get(display_name)
+    if not image_tuple:
+        return display_name
+
+    cms_key = image_tuple[0]
+    tags = infer_oms_image_tags(display_name, cms_key)
+    if not tags:
+        return display_name
+
+    return f"{display_name} | {' • '.join(tags)}"
+
+
 def detect_offer_type(parsed_docs: list) -> dict:
     """
     Auto-detect task type, reward type, and recommended image from content.
@@ -1379,16 +1628,20 @@ def build_language_readiness(parsed_docs: list) -> dict:
     """Build per-language QA readiness summary from missing + invalid checks."""
     missing_report = generate_missing_content_report(parsed_docs)
     invalid_report = generate_invalid_placeholder_report(parsed_docs)
+    language_mismatch_report = generate_language_mismatch_report(parsed_docs)
 
     by_language = {}
     ready_count = 0
     missing_count = 0
     invalid_count = 0
+    mismatch_count = 0
 
     for doc in parsed_docs:
         lang = doc.language_code
         has_missing = len(missing_report["by_language"].get(lang, [])) > 0
         invalid_total = invalid_report["by_language"].get(lang, {}).get("count", 0)
+        mismatch_info = language_mismatch_report.get(lang, {})
+        has_mismatch = mismatch_info.get("mismatch", False)
 
         if invalid_total > 0:
             status = "invalid"
@@ -1400,11 +1653,19 @@ def build_language_readiness(parsed_docs: list) -> dict:
             status = "ready"
             ready_count += 1
 
+        if has_mismatch:
+            mismatch_count += 1
+
         by_language[lang] = {
             "status": status,
             "missing_issues": missing_report["by_language"].get(lang, []),
             "invalid_count": invalid_total,
             "invalid_tokens": invalid_report["by_language"].get(lang, {}).get("tokens", []),
+            "language_mismatch": {
+                "detected": has_mismatch,
+                "detected_lang": mismatch_info.get("detected_language"),
+                "reason": mismatch_info.get("reason"),
+            },
         }
 
     return {
@@ -1412,7 +1673,8 @@ def build_language_readiness(parsed_docs: list) -> dict:
         "ready_count": ready_count,
         "missing_count": missing_count,
         "invalid_count": invalid_count,
-        "has_issues": (missing_count + invalid_count) > 0,
+        "mismatch_count": mismatch_count,
+        "has_issues": (missing_count + invalid_count + mismatch_count) > 0,
     }
 
 
@@ -1587,16 +1849,92 @@ def generate_diff_html(old_text: str, new_text: str, old_label: str = "Existing"
 
 
 # Page config
+brand_logo_path, brand_favicon_path, brand_favicon_black_path = ensure_brand_assets()
+
 st.set_page_config(
     page_title="CMS Template Generator",
-    page_icon="📝",
+    page_icon=str(brand_favicon_black_path),
     layout="wide",
 )
 
 # Custom CSS
 st.markdown("""
 <style>
+    /* Betsson Sans: Local woff2 files for maximum performance */
+    @font-face {
+        font-family: "Betsson Sans";
+        font-style: normal;
+        font-weight: 400;
+        src: url("./app/images/brand/BetssonSans-Regular.woff2") format("woff2"),
+             url("https://www.betsson.com/wp-content/themes/betsson-theme/assets/fonts/betsson-sans/BetssonSans-Regular.woff2") format("woff2");
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: "Betsson Sans";
+        font-style: normal;
+        font-weight: 600;
+        src: url("./app/images/brand/BetssonSans-SemiBold.woff2") format("woff2"),
+             url("https://www.betsson.com/wp-content/themes/betsson-theme/assets/fonts/betsson-sans/BetssonSans-SemiBold.woff2") format("woff2");
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: "Betsson Sans";
+        font-style: normal;
+        font-weight: 700;
+        src: url("./app/images/brand/BetssonSans-Bold.woff2") format("woff2"),
+             url("https://www.betsson.com/wp-content/themes/betsson-theme/assets/fonts/betsson-sans/BetssonSans-Bold.woff2") format("woff2");
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: "Betsson Sans";
+        font-style: normal;
+        font-weight: 900;
+        src: url("./app/images/brand/BetssonSans-Black.woff2") format("woff2"),
+             url("https://www.betsson.com/wp-content/themes/betsson-theme/assets/fonts/betsson-sans/BetssonSans-Black.woff2") format("woff2");
+        font-display: swap;
+    }
+
+    /* Open Sans: Fallback for body and UI text */
+    @font-face {
+        font-family: "Open Sans";
+        font-style: normal;
+        font-weight: 400;
+        src: url("https://fonts.gstatic.com/s/opensans/v35/memSYaGs126MiZpBA-UvWbX5ZZdhS6IgoI7JY4TQyVY.woff2") format("woff2");
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: "Open Sans";
+        font-style: normal;
+        font-weight: 600;
+        src: url("https://fonts.gstatic.com/s/opensans/v35/memQYaGs126MiZpBA-UFWbXpF7b2E-IoF23CsT_Ud-0.woff2") format("woff2");
+        font-display: swap;
+    }
+
+    @font-face {
+        font-family: "Open Sans";
+        font-style: normal;
+        font-weight: 700;
+        src: url("https://fonts.gstatic.com/s/opensans/v35/memQYaGs126MiZpBA-UFWbXpF7b2E-IoL0SwMCRvDY.woff2") format("woff2");
+        font-display: swap;
+    }
+
     :root {
+        /* Betsson 2025 Brand Palette */
+        --bs-primary: #00A651;
+        --bs-primary-light: rgba(0, 166, 81, 0.1);
+        --bs-secondary: #FF6600;
+        --bs-secondary-dark: #E45D1C;
+        --bs-black: #1F1F1F;
+        --bs-violet: #5404CD;
+        --bs-violet-light: rgba(84, 4, 205, 0.1);
+        --bs-light-gray: #F2F2F2;
+        --bs-light-gray-dark: #E5E5E5;
+        
+        /* Existing app palette (for compatibility) */
         --rc-bg: #0e1218;
         --rc-panel: #141b24;
         --rc-panel-soft: #101720;
@@ -1611,74 +1949,207 @@ st.markdown("""
         --rc-red-bg: rgba(239, 139, 134, 0.14);
         --rc-blue: #7db7ff;
         --rc-blue-bg: rgba(125, 183, 255, 0.12);
+        --rc-brand: #FF6600;
+        --rc-brand-2: #fd9455;
+        --rc-brand-hover: #ff8533;
+        --rc-brand-active: #E45D1C;
     }
 
     .stApp {
+        font-family: "Open Sans", Arial, sans-serif;
         background:
-            radial-gradient(circle at top right, rgba(68, 92, 132, 0.18), transparent 28%),
-            linear-gradient(180deg, #0c1117 0%, #0b1016 100%);
+            /* Betsson polyform blob — top right, orange glow */
+            radial-gradient(ellipse 60% 40% at 95% 5%, rgba(255, 102, 0, 0.18), transparent 55%),
+            /* Violet accent — bottom left */
+            radial-gradient(ellipse 50% 35% at 5% 95%, rgba(84, 4, 205, 0.12), transparent 55%),
+            /* Blue-grey mid atmosphere */
+            radial-gradient(circle at 55% 50%, rgba(68, 92, 132, 0.08), transparent 50%),
+            /* Base dark */
+            linear-gradient(180deg, #0c1117 0%, #090d12 100%);
+    }
+
+    h1, h2, h3, h4, h5, h6,
+    .stMarkdown h1,
+    .stMarkdown h2,
+    .stMarkdown h3 {
+        font-family: "Betsson Sans", "Open Sans", Arial, sans-serif;
+        letter-spacing: -0.02em;
+        font-weight: 700;
+    }
+
+    .stMarkdown p,
+    .stCaption,
+    .stText,
+    label,
+    .stButton > button,
+    .stDownloadButton > button,
+    .stFormSubmitButton > button {
+        font-family: "Open Sans", Arial, sans-serif;
     }
 
     .stAlert > div {
         padding: 0.5rem 1rem;
     }
 
+    /* Empty state card */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 64px 40px;
+        border-radius: 24px;
+        border: 1.5px dashed rgba(255, 102, 0, 0.3);
+        background:
+            radial-gradient(ellipse 70% 60% at 50% 0%, rgba(255, 102, 0, 0.07), transparent 60%),
+            radial-gradient(ellipse 50% 40% at 100% 100%, rgba(84, 4, 205, 0.07), transparent 60%),
+            linear-gradient(135deg, rgba(20, 27, 36, 0.95), rgba(13, 19, 27, 0.98));
+        position: relative;
+        overflow: hidden;
+        margin: 8px 0 24px 0;
+    }
+
+    /* Decorative polyform glow for empty state */
+    .empty-state::before {
+        content: '';
+        position: absolute;
+        top: -60px;
+        right: -60px;
+        width: 260px;
+        height: 260px;
+        background: radial-gradient(circle at 35% 35%, rgba(255, 102, 0, 0.22), transparent 65%);
+        border-radius: 60% 40% 30% 70% / 50% 60% 40% 50%;
+        pointer-events: none;
+    }
+
+    .empty-state::after {
+        content: '';
+        position: absolute;
+        bottom: -40px;
+        left: -40px;
+        width: 180px;
+        height: 180px;
+        background: radial-gradient(circle at 60% 60%, rgba(84, 4, 205, 0.15), transparent 65%);
+        border-radius: 40% 60% 70% 30%;
+        pointer-events: none;
+    }
+
+    .empty-state-icon {
+        font-size: 3.5rem;
+        margin-bottom: 20px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .empty-state-title {
+        font-family: "Betsson Sans", "Open Sans", Arial, sans-serif;
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: var(--rc-text);
+        margin: 0 0 12px 0;
+        letter-spacing: -0.02em;
+        position: relative;
+        z-index: 1;
+    }
+
+    .empty-state-body {
+        color: var(--rc-muted);
+        font-size: 1rem;
+        line-height: 1.7;
+        max-width: 360px;
+        margin: 0 0 24px 0;
+        position: relative;
+        z-index: 1;
+    }
+
+    .empty-state-hint {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(255, 102, 0, 0.1);
+        border: 1px solid rgba(255, 102, 0, 0.25);
+        border-radius: 24px;
+        padding: 10px 18px;
+        color: var(--rc-brand);
+        font-size: 0.9rem;
+        font-weight: 600;
+        position: relative;
+        z-index: 1;
+    }
+
     .review-hero {
         background: linear-gradient(135deg, rgba(22, 31, 42, 0.96), rgba(15, 22, 31, 0.96));
         border: 1px solid var(--rc-border);
-        border-radius: 18px;
-        padding: 20px 22px;
-        margin: 0 0 16px 0;
+        border-radius: 20px;
+        padding: 32px 28px;
+        margin: 0 0 24px 0;
         box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+    }
+
+    .review-hero-head {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 6px;
+    }
+
+    .review-hero-logo {
+        height: 40px;
+        width: auto;
+        display: block;
     }
 
     .review-hero h1 {
         margin: 0;
-        font-size: 2rem;
+        font-size: 2.2rem;
+        font-weight: 700;
         color: var(--rc-text);
-        letter-spacing: -0.03em;
+        letter-spacing: -0.02em;
     }
 
     .review-hero p {
-        margin: 6px 0 16px 0;
+        margin: 10px 0 20px 0;
         color: var(--rc-muted);
-        font-size: 0.98rem;
+        font-size: 1rem;
+        line-height: 1.5;
     }
 
     .hero-meta {
         display: flex;
         flex-wrap: wrap;
-        gap: 10px;
+        gap: 12px;
     }
 
     .hero-pill {
         display: inline-flex;
         align-items: center;
-        gap: 6px;
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid var(--rc-border);
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(125, 183, 255, 0.2);
         border-radius: 999px;
-        padding: 6px 11px;
+        padding: 8px 14px;
         color: var(--rc-text);
-        font-size: 0.9rem;
+        font-size: 0.92rem;
     }
 
     .hero-pill .label {
         color: var(--rc-muted);
+        font-weight: 500;
     }
 
     .console-strip {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-        margin: 0 0 12px 0;
+        gap: 14px;
+        margin: 0 0 20px 0;
     }
 
     .console-metric {
         background: var(--rc-panel);
         border: 1px solid var(--rc-border);
-        border-radius: 14px;
-        padding: 12px 14px;
+        border-radius: 16px;
+        padding: 16px 18px;
     }
 
     .console-metric .label {
@@ -1700,6 +2171,34 @@ st.markdown("""
         color: var(--rc-muted);
         font-size: 0.84rem;
         margin-top: 4px;
+    }
+
+    /* Badge and highlight styles (Betsson Violet) */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: var(--bs-violet-light);
+        border: 1px solid var(--bs-violet);
+        color: var(--bs-violet);
+        border-radius: 14px;
+        padding: 4px 10px;
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .badge.success {
+        background: rgba(100, 213, 150, 0.12);
+        border-color: rgba(100, 213, 150, 0.32);
+        color: var(--rc-green);
+    }
+
+    .highlight {
+        background: var(--bs-violet-light);
+        color: var(--bs-violet);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
     }
 
     .metric-ready { border-color: rgba(100, 213, 150, 0.26); background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)); }
@@ -1740,62 +2239,265 @@ st.markdown("""
         background: linear-gradient(180deg, rgba(20, 27, 36, 0.98), rgba(14, 19, 26, 0.98));
         border: 1px solid var(--rc-border);
         border-radius: 16px;
-        padding: 16px 18px;
-        margin-bottom: 14px;
+        padding: 20px 22px;
+        margin-bottom: 20px;
     }
 
     .console-panel-title {
-        margin: 0 0 4px 0;
+        margin: 0 0 8px 0;
         color: var(--rc-text);
-        font-size: 1rem;
+        font-size: 1.1rem;
         font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
     }
 
     .console-panel-subtitle {
         margin: 0;
         color: var(--rc-muted);
-        font-size: 0.88rem;
+        font-size: 0.9rem;
+        line-height: 1.5;
     }
 
     .panel-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-        margin: 0 0 14px 0;
+        gap: 16px;
+        margin: 0 0 20px 0;
     }
 
     .mini-panel {
         background: var(--rc-panel);
         border: 1px solid var(--rc-border);
-        border-radius: 14px;
-        padding: 14px 15px;
-        min-height: 120px;
+        border-radius: 16px;
+        padding: 18px 20px;
+        min-height: 140px;
     }
 
     .mini-panel h4 {
-        margin: 0 0 8px 0;
+        margin: 0 0 10px 0;
         color: var(--rc-text);
-        font-size: 0.98rem;
+        font-size: 1rem;
+        font-weight: 600;
     }
 
     .mini-panel p,
     .mini-panel ul {
         margin: 0;
         color: var(--rc-muted);
-        font-size: 0.88rem;
-        line-height: 1.55;
+        font-size: 0.9rem;
+        line-height: 1.6;
     }
 
     .mini-panel ul {
-        padding-left: 18px;
+        padding-left: 20px;
     }
 
     .section-kicker {
-        color: var(--rc-blue);
+        color: var(--bs-violet);
         text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-size: 0.72rem;
+        letter-spacing: 0.1em;
+        font-size: 0.75rem;
         margin-bottom: 4px;
+    }
+
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, rgba(10, 15, 22, 0.98), rgba(8, 12, 18, 0.98));
+        border-right: 1px solid rgba(38, 50, 67, 0.55);
+    }
+
+    .sidebar-status-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .sidebar-status-pill {
+        border: 1px solid var(--rc-border);
+        border-radius: 10px;
+        padding: 8px 10px;
+        font-size: 0.84rem;
+        color: var(--rc-text);
+        background: rgba(20, 27, 36, 0.72);
+    }
+
+    .sidebar-status-pill.ok {
+        border-color: rgba(100, 213, 150, 0.32);
+        background: rgba(100, 213, 150, 0.1);
+    }
+
+    .sidebar-status-pill.warn {
+        border-color: rgba(244, 201, 107, 0.32);
+        background: rgba(244, 201, 107, 0.1);
+    }
+
+    /* === Primary Navigation Tabs === */
+    .stTabs [data-baseweb="tab-list"] {
+        background: rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+        padding: 4px;
+        gap: 2px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 28px;
+        width: fit-content;
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        font-family: "Open Sans", Arial, sans-serif !important;
+        font-size: 0.92rem !important;
+        font-weight: 500 !important;
+        letter-spacing: -0.01em !important;
+        color: rgba(255, 255, 255, 0.45) !important;
+        background: transparent !important;
+        border: none !important;
+        border-radius: 9px !important;
+        padding: 9px 20px !important;
+        margin: 0 !important;
+        transition: color 0.15s ease, background 0.15s ease;
+        white-space: nowrap;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        color: rgba(255, 255, 255, 0.75) !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+
+    .stTabs [aria-selected="true"] {
+        color: #1a1a1a !important;
+        background: #ffffff !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 0.5px rgba(0,0,0,0.08) !important;
+    }
+
+    /* Remove Streamlit's default blue underline indicator */
+    .stTabs [data-baseweb="tab-highlight"] {
+        display: none !important;
+    }
+
+    .stTabs [data-baseweb="tab-border"] {
+        display: none !important;
+    }
+
+    /* === Global interaction system: consistent hover and focus states === */
+    .stButton > button,
+    .stDownloadButton > button,
+    .stFormSubmitButton > button,
+    .stFileUploader label,
+    [data-testid="stExpander"] details,
+    .console-metric,
+    .mini-panel,
+    .console-panel {
+        transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease, background-color 0.18s ease;
+    }
+
+    .stButton > button:hover,
+    .stDownloadButton > button:hover,
+    .stFormSubmitButton > button:hover,
+    .stFileUploader label:hover,
+    [data-testid="stExpander"] details:hover,
+    .console-metric:hover,
+    .mini-panel:hover {
+        border-color: rgba(125, 183, 255, 0.46) !important;
+        box-shadow: 0 0 0 1px rgba(125, 183, 255, 0.22), 0 10px 24px rgba(0, 0, 0, 0.16);
+        transform: translateY(-1px);
+    }
+
+    .stButton > button,
+    .stDownloadButton > button,
+    .stFormSubmitButton > button {
+        border-radius: 24px !important;
+        padding: 10px 20px !important;
+        font-weight: 600;
+    }
+
+    /* Primary button: Green (Betsson 2025) */
+    .stButton > button[kind="primary"],
+    .stFormSubmitButton > button {
+        background: var(--bs-primary) !important;
+        color: #ffffff !important;
+        border: none !important;
+    }
+
+    .stButton > button[kind="primary"]:hover,
+    .stFormSubmitButton > button:hover {
+        background: #00933a !important;
+        box-shadow: 0 8px 16px rgba(0, 166, 81, 0.3) !important;
+    }
+
+    .stButton > button[kind="primary"]:active,
+    .stFormSubmitButton > button:active {
+        background: #007a2d !important;
+    }
+
+    /* Secondary button: Orange variant */
+    .stDownloadButton > button {
+        background: var(--rc-brand) !important;
+        color: #ffffff !important;
+        border: none !important;
+    }
+
+    .stDownloadButton > button:hover {
+        background: #E45D1C !important;
+        box-shadow: 0 8px 16px rgba(255, 102, 0, 0.3) !important;
+    }
+
+    .stTextInput input:hover,
+    .stTextArea textarea:hover,
+    .stNumberInput input:hover,
+    .stDateInput input:hover,
+    div[data-baseweb="select"]:hover {
+        border-color: rgba(125, 183, 255, 0.46) !important;
+    }
+
+    .stTextInput input:focus,
+    .stTextArea textarea:focus,
+    .stNumberInput input:focus,
+    .stDateInput input:focus,
+    .stButton > button:focus,
+    .stDownloadButton > button:focus,
+    .stFormSubmitButton > button:focus,
+    .stTabs [data-baseweb="tab"]:focus,
+    .stTabs [data-baseweb="tab"]:focus-visible,
+    [data-testid="stExpander"] summary:focus,
+    [data-testid="stExpander"] summary:focus-visible,
+    [data-baseweb="select"]:focus-within {
+        outline: none !important;
+        border-color: rgba(125, 183, 255, 0.62) !important;
+        box-shadow: 0 0 0 3px rgba(125, 183, 255, 0.26) !important;
+    }
+
+    .stMarkdown a {
+        transition: color 0.16s ease, text-shadow 0.16s ease;
+    }
+
+    .stMarkdown a:hover {
+        color: #9cc8ff;
+        text-shadow: 0 0 12px rgba(125, 183, 255, 0.3);
+    }
+
+    .stMarkdown a:focus,
+    .stMarkdown a:focus-visible {
+        outline: none;
+        border-radius: 4px;
+        box-shadow: 0 0 0 3px rgba(125, 183, 255, 0.3);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .stButton > button,
+        .stDownloadButton > button,
+        .stFormSubmitButton > button,
+        .stFileUploader label,
+        [data-testid="stExpander"] details,
+        .stTabs [data-baseweb="tab"],
+        .console-metric,
+        .mini-panel,
+        .console-panel,
+        .stMarkdown a {
+            transition: none !important;
+            transform: none !important;
+        }
     }
 
     @media (max-width: 900px) {
@@ -1820,7 +2522,10 @@ def render_review_console_hero() -> None:
     st.markdown(
         (
             "<section class='review-hero'>"
+            "<div class='review-hero-head'>"
+            f"<img class='review-hero-logo' src='{BETSSON_LOGO_URL}' alt='Betsson logo'/>"
             "<h1>CMS Template Generator</h1>"
+            "</div>"
             "<p>Review console for localized campaign content, QA resolution, and export auditing.</p>"
             "<div class='hero-meta'>"
             f"<span class='hero-pill'><span class='label'>Document</span><strong>{html.escape(document_name)}</strong></span>"
@@ -1837,6 +2542,7 @@ def render_review_console_hero() -> None:
 def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
     """Render review-console QA strip."""
     resolved_count = len(resolved_events)
+    mismatch_count = readiness.get("mismatch_count", 0)
     resolved_text = " | ".join(resolved_events[-2:]) if resolved_events else "No resolutions yet"
     st.markdown(
         (
@@ -1844,6 +2550,7 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             f"<div class='console-metric metric-ready'><div class='label'>Ready</div><div class='value'>{readiness['ready_count']}</div><div class='sub'>Languages cleared for export</div></div>"
             f"<div class='console-metric metric-missing'><div class='label'>Missing</div><div class='value'>{readiness['missing_count']}</div><div class='sub'>Incomplete content blocks</div></div>"
             f"<div class='console-metric metric-invalid'><div class='label'>Invalid</div><div class='value'>{readiness['invalid_count']}</div><div class='sub'>Placeholder issues still open</div></div>"
+            f"<div class='console-metric metric-missing'><div class='label'>Potential Wrong Language</div><div class='value'>{mismatch_count}</div><div class='sub'>Detected content-language mismatches</div></div>"
             f"<div class='console-metric metric-session'><div class='label'>Resolved</div><div class='value'>{resolved_count}</div><div class='sub'>{html.escape(resolved_text)}</div></div>"
             "</div>"
         ),
@@ -1858,10 +2565,14 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
         lang = doc.language_code
         lang_name = LANGUAGE_NAMES.get(lang, lang)
         state = readiness["by_language"][lang]["status"]
+        mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
         if state == "missing":
             issue_buttons.append((lang, f"⚠ {lang} {lang_name}"))
         elif state == "invalid":
             issue_buttons.append((lang, f"✖ {lang} {lang_name}"))
+        elif mismatch_info.get("detected"):
+            detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
+            issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
 
     if not issue_buttons:
         st.markdown("<div class='chip-row'><span class='issue-chip'>✓ No open QA issues</span></div>", unsafe_allow_html=True)
@@ -1877,6 +2588,61 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
                 st.session_state["qa_target_lang"] = lang
                 st.session_state["qa_language_select"] = lang
                 st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_language_mismatch_warnings(readiness: dict, parsed_docs: list[ParsedDocument]) -> None:
+    """
+    Render prominent banner for languages with detected mismatches (e.g., English content in Spanish doc).
+    Provides quick action buttons to jump to affected languages.
+    """
+    # Extract languages with mismatches
+    mismatch_langs: list[tuple[str, str]] = []
+    for doc in parsed_docs:
+        lang = doc.language_code
+        lang_name = LANGUAGE_NAMES.get(lang, lang)
+        mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
+        if mismatch_info.get("detected"):
+            detected = mismatch_info.get("detected_lang", "unknown").upper()
+            mismatch_langs.append((lang, lang_name, detected))
+    
+    if not mismatch_langs:
+        return  # No mismatches, don't show banner
+    
+    # Render banner with alert styling
+    st.markdown(
+        "<div style='background: linear-gradient(135deg, rgba(255,102,0,0.15), rgba(255,102,0,0.08)); "
+        "border-left: 4px solid #FF6600; border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;'>"
+        "<div style='display: flex; align-items: center; gap: 12px; margin-bottom: 12px;'>"
+        "<span style='font-size: 20px;'>🌐</span>"
+        "<div>"
+        f"<strong style='color: #FF6600;'>Potential Language Mismatches Detected</strong>"
+        "<p style='margin: 4px 0 0 0; font-size: 0.9em; color: #aaa;'>"
+        "The tool detected content in a different language than the filename suggests. "
+        "Review the languages below to ensure your documents are correctly translated."
+        "</p></div></div>",
+        unsafe_allow_html=True
+    )
+    
+    # Quick action buttons
+    st.markdown("<div style='display: flex; gap: 8px; flex-wrap: wrap;'>", unsafe_allow_html=True)
+    for lang, lang_name, detected_lang in mismatch_langs:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(
+                f"<span style='display: inline-block; padding: 6px 12px; "
+                f"background: rgba(255,102,0,0.2); border-radius: 6px; font-size: 0.9em;'>"
+                f"<strong>{lang}</strong> ({lang_name}) <br/>"
+                f"<span style='color: #FF6600;'>Detected as: {detected_lang}</span>"
+                f"</span>",
+                unsafe_allow_html=True
+            )
+        with col2:
+            if st.button("Review →", key=f"mismatch_quick_{lang}", help=f"Jump to {lang} language", width="stretch"):
+                st.session_state["qa_target_lang"] = lang
+                st.session_state["qa_language_select"] = lang
+                st.rerun()
+    
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1898,7 +2664,8 @@ def main():
     
     # Sidebar for configuration
     with st.sidebar:
-        st.header("⚙️ Offer Configuration")
+        st.header("⚙ Offer Configuration")
+        st.caption("Set campaign parameters and communication payload before generation.")
         
         # Check for auto-detected values (set during upload processing)
         detected_task = st.session_state.get("detected_task_type")
@@ -1907,158 +2674,156 @@ def main():
         
         # Check if we just detected new values and need to apply them
         apply_detection = st.session_state.pop("apply_detection", False)
-        
-        # Task Type - with custom option
-        task_type_options = TASK_TYPES + ["➕ Custom..."]
-        
-        # Initialize or update widget key based on detection
-        if apply_detection and detected_task and detected_task in task_type_options:
-            st.session_state["task_type_select"] = detected_task
-        elif "task_type_select" not in st.session_state:
-            # First render - set default
-            if detected_task and detected_task in task_type_options:
+
+        with st.expander("Offer Setup", expanded=True):
+            # Task Type - with custom option
+            task_type_options = TASK_TYPES + ["➕ Custom..."]
+
+            # Initialize or update widget key based on detection
+            if apply_detection and detected_task and detected_task in task_type_options:
                 st.session_state["task_type_select"] = detected_task
-            elif "PlaceBetWithSettlement" in task_type_options:
-                st.session_state["task_type_select"] = "PlaceBetWithSettlement"
-            else:
-                st.session_state["task_type_select"] = task_type_options[0]
-        
-        task_type_selection = st.selectbox(
-            "Task Type",
-            options=task_type_options,
-            key="task_type_select",
-            help="The task type for this offer (used in template key and metadata)",
-        )
-        
-        if detected_task and task_type_selection == detected_task:
-            st.caption("🔍 Auto-detected")
-        
-        if task_type_selection == "➕ Custom...":
-            task_type = st.text_input(
-                "Custom Task Type",
-                placeholder="e.g., SpinTheWheel",
-                help="Enter a new task type name (PascalCase, no spaces)",
+            elif "task_type_select" not in st.session_state:
+                if detected_task and detected_task in task_type_options:
+                    st.session_state["task_type_select"] = detected_task
+                elif "PlaceBetWithSettlement" in task_type_options:
+                    st.session_state["task_type_select"] = "PlaceBetWithSettlement"
+                else:
+                    st.session_state["task_type_select"] = task_type_options[0]
+
+            task_type_selection = st.selectbox(
+                "Task Type",
+                options=task_type_options,
+                key="task_type_select",
+                help="The task type for this offer (used in template key and metadata)",
             )
-            if task_type:
-                st.caption(f"✅ Using custom: `{task_type}`")
-        else:
-            task_type = task_type_selection
-        
-        # Reward Type - with custom option
-        reward_type_options = REWARD_TYPES + ["➕ Custom..."]
-        
-        # Initialize or update widget key based on detection
-        if apply_detection and detected_reward and detected_reward in reward_type_options:
-            st.session_state["reward_type_select"] = detected_reward
-        elif "reward_type_select" not in st.session_state:
-            if detected_reward and detected_reward in reward_type_options:
-                st.session_state["reward_type_select"] = detected_reward
-            elif "CashFreespin" in reward_type_options:
-                st.session_state["reward_type_select"] = "CashFreespin"
-            else:
-                st.session_state["reward_type_select"] = reward_type_options[0]
-        
-        reward_type_selection = st.selectbox(
-            "Reward Type",
-            options=reward_type_options,
-            key="reward_type_select",
-            help="The reward type for this offer",
-        )
-        
-        if detected_reward and reward_type_selection == detected_reward:
-            st.caption("🔍 Auto-detected")
-        
-        if reward_type_selection == "➕ Custom...":
-            reward_type = st.text_input(
-                "Custom Reward Type",
-                placeholder="e.g., WheelSpin",
-                help="Enter a new reward type name (PascalCase, no spaces)",
-            )
-            if reward_type:
-                st.caption(f"✅ Using custom: `{reward_type}`")
-        else:
-            reward_type = reward_type_selection
-        
-        # Bonus Product (optional) - with custom option
-        use_bonus_product = st.checkbox("Include Bonus Product", value=False)
-        bonus_product = None
-        if use_bonus_product:
-            bonus_product_options = BONUS_PRODUCTS + ["➕ Custom..."]
-            bonus_product_selection = st.selectbox(
-                "Bonus Product",
-                options=bonus_product_options,
-                help="Optional product specification",
-            )
-            if bonus_product_selection == "➕ Custom...":
-                bonus_product = st.text_input(
-                    "Custom Bonus Product",
-                    placeholder="e.g., NewProduct",
+
+            if detected_task and task_type_selection == detected_task:
+                st.caption("🔍 Auto-detected")
+
+            if task_type_selection == "➕ Custom...":
+                task_type = st.text_input(
+                    "Custom Task Type",
+                    placeholder="e.g., SpinTheWheel",
+                    help="Enter a new task type name (PascalCase, no spaces)",
                 )
+                if task_type:
+                    st.caption(f"✅ Using custom: `{task_type}`")
             else:
-                bonus_product = bonus_product_selection
-        
-        # OMS Image (optional)
-        st.subheader("🖼️ OMS Image")
-        image_options = list(OMS_IMAGES.keys())
-        
-        # Initialize or update widget key based on detection
-        if apply_detection and detected_image and detected_image in image_options:
-            st.session_state["image_select"] = detected_image
-        elif "image_select" not in st.session_state:
-            if detected_image and detected_image in image_options:
+                task_type = task_type_selection
+
+            # Reward Type - with custom option
+            reward_type_options = REWARD_TYPES + ["➕ Custom..."]
+            if apply_detection and detected_reward and detected_reward in reward_type_options:
+                st.session_state["reward_type_select"] = detected_reward
+            elif "reward_type_select" not in st.session_state:
+                if detected_reward and detected_reward in reward_type_options:
+                    st.session_state["reward_type_select"] = detected_reward
+                elif "CashFreespin" in reward_type_options:
+                    st.session_state["reward_type_select"] = "CashFreespin"
+                else:
+                    st.session_state["reward_type_select"] = reward_type_options[0]
+
+            reward_type_selection = st.selectbox(
+                "Reward Type",
+                options=reward_type_options,
+                key="reward_type_select",
+                help="The reward type for this offer",
+            )
+
+            if detected_reward and reward_type_selection == detected_reward:
+                st.caption("🔍 Auto-detected")
+
+            if reward_type_selection == "➕ Custom...":
+                reward_type = st.text_input(
+                    "Custom Reward Type",
+                    placeholder="e.g., WheelSpin",
+                    help="Enter a new reward type name (PascalCase, no spaces)",
+                )
+                if reward_type:
+                    st.caption(f"✅ Using custom: `{reward_type}`")
+            else:
+                reward_type = reward_type_selection
+
+            current_offer = f"{task_type}-{reward_type}" if task_type and reward_type else "Awaiting setup"
+            st.caption(f"Offer key preview: {current_offer}")
+
+            use_bonus_product = st.checkbox("Include Bonus Product", value=False)
+            bonus_product = None
+            if use_bonus_product:
+                bonus_product_options = BONUS_PRODUCTS + ["➕ Custom..."]
+                bonus_product_selection = st.selectbox(
+                    "Bonus Product",
+                    options=bonus_product_options,
+                    help="Optional product specification",
+                )
+                if bonus_product_selection == "➕ Custom...":
+                    bonus_product = st.text_input(
+                        "Custom Bonus Product",
+                        placeholder="e.g., NewProduct",
+                    )
+                else:
+                    bonus_product = bonus_product_selection
+
+        with st.expander("OMS Image", expanded=True):
+            st.caption("Select the visual used in OMS previews and generated templates.")
+            image_options = list(OMS_IMAGES.keys())
+            if apply_detection and detected_image and detected_image in image_options:
                 st.session_state["image_select"] = detected_image
-            else:
-                st.session_state["image_select"] = image_options[0]
-        
-        selected_image_display = st.selectbox(
-            "Select OMS Image",
-            options=image_options,
-            key="image_select",
-            help="Brand-agnostic image from CMS GenericSiteMessageImageRepository",
-        )
-        
-        if detected_image and selected_image_display == detected_image:
-            st.caption("🔍 Auto-selected based on reward type")
-        
-        image_tuple = OMS_IMAGES.get(selected_image_display, ("CW_BonusFreeSpin_casino", "3736707", "6f9506db0ced4118993357b114c831ce.jpg"))
-        selected_image_key = image_tuple[0]
-        selected_image_id = image_tuple[1]
-        selected_image_file = image_tuple[2] if len(image_tuple) > 2 else None
-        
-        # Show image preview
-        if selected_image_file:
-            image_path = Path(__file__).parent / "images" / selected_image_file
-            if image_path.exists():
-                st.image(str(image_path), caption=selected_image_display, width=150)
-        st.caption(f"CMS Key: `{selected_image_key}` | ID: `{selected_image_id}`")
-        
-        st.divider()
-        
-        # Send Conditions
-        st.subheader("Send Conditions")
-        default_conditions = {
-            "NotOptedIn",
-            "JoinedCampaign",
-            "CampaignHasStarted",
-            "ClaimedReward-TemplateA",
-            "ClaimedReward-TemplateB",
-        }
-        selected_conditions = []
-        for condition in SEND_CONDITIONS:
-            if st.checkbox(condition, value=condition in default_conditions):
-                selected_conditions.append(condition)
-        
-        # Custom send condition
-        custom_condition = st.text_input(
-            "Custom Send Condition (optional)",
-            placeholder="e.g., TaskCompleted",
-            help="Add a new send condition if needed",
-        )
-        if custom_condition:
-            selected_conditions.append(custom_condition)
-            st.caption(f"✅ Added: `{custom_condition}`")
-        
-        st.divider()
+            elif "image_select" not in st.session_state:
+                if detected_image and detected_image in image_options:
+                    st.session_state["image_select"] = detected_image
+                else:
+                    st.session_state["image_select"] = image_options[0]
+
+            selected_image_display = st.selectbox(
+                "Select OMS Image",
+                options=image_options,
+                key="image_select",
+                help="Brand-agnostic image from CMS GenericSiteMessageImageRepository",
+                format_func=format_oms_image_option,
+            )
+
+            if detected_image and selected_image_display == detected_image:
+                st.caption("🔍 Auto-selected based on reward type")
+
+            image_tuple = OMS_IMAGES.get(selected_image_display, ("CW_BonusFreeSpin_casino", "3736707", "6f9506db0ced4118993357b114c831ce.jpg"))
+            selected_image_key = image_tuple[0]
+            selected_image_id = image_tuple[1]
+            selected_image_file = image_tuple[2] if len(image_tuple) > 2 else None
+            selected_image_tags = infer_oms_image_tags(selected_image_display, selected_image_key)
+
+            if selected_image_file:
+                image_path = Path(__file__).parent / "images" / selected_image_file
+                if image_path.exists():
+                    st.image(str(image_path), caption=selected_image_display, width=150)
+            if selected_image_tags:
+                st.caption(f"Tags: {' • '.join(selected_image_tags)}")
+            st.caption(f"CMS Key: `{selected_image_key}` | ID: `{selected_image_id}`")
+
+        with st.expander("Send Conditions", expanded=False):
+            st.caption("Toggle message triggers included in export payload.")
+            default_conditions = {
+                "NotOptedIn",
+                "JoinedCampaign",
+                "CampaignHasStarted",
+                "ClaimedReward-TemplateA",
+                "ClaimedReward-TemplateB",
+            }
+            selected_conditions = []
+            for condition in SEND_CONDITIONS:
+                if st.checkbox(condition, value=condition in default_conditions):
+                    selected_conditions.append(condition)
+
+            custom_condition = st.text_input(
+                "Custom Send Condition (optional)",
+                placeholder="e.g., TaskCompleted",
+                help="Add a new send condition if needed",
+            )
+            if custom_condition:
+                selected_conditions.append(custom_condition)
+                st.caption(f"✅ Added: `{custom_condition}`")
+
+        st.markdown("### Configuration Health")
         
         # Validation
         config_valid = True
@@ -2072,13 +2837,19 @@ def main():
         # Generate offer key (bonus_product goes in metadata only, not in key)
         if task_type and reward_type:
             offer_key = f"{task_type}-{reward_type}"
-            st.success(f"**Offer Key:** `{offer_key}`")
+            st.markdown(
+                f"<div class='sidebar-status-wrap'><div class='sidebar-status-pill ok'><strong>Offer Key:</strong> {html.escape(offer_key)}</div></div>",
+                unsafe_allow_html=True,
+            )
         else:
             offer_key = ""
-            st.info("Configure Task Type and Reward Type to see offer key")
+            st.markdown(
+                "<div class='sidebar-status-wrap'><div class='sidebar-status-pill warn'>Task Type and Reward Type are required to generate an offer key.</div></div>",
+                unsafe_allow_html=True,
+            )
     
     # Main content area
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📤 Upload Content", "👁️ Preview", "📥 Generate & Download", "🔍 Compare", "📖 Help"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Upload", "Review", "Export", "Compare", "Help"])
     
     with tab1:
         st.header("Step 1: Upload Content")
@@ -2296,7 +3067,14 @@ def main():
         )
         
         if "parsed_docs" not in st.session_state:
-            st.info("Upload a ZIP file first to see preview")
+            st.markdown("""
+            <div class='empty-state'>
+                <div class='empty-state-icon'>👁️</div>
+                <p class='empty-state-title'>No Content to Preview</p>
+                <p class='empty-state-body'>Upload a ZIP file with your localized Word documents on the Upload tab to start reviewing content here.</p>
+                <span class='empty-state-hint'>← Go to Upload Content</span>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             parsed_docs = st.session_state["parsed_docs"]
             effective_docs = build_effective_parsed_docs(parsed_docs)
@@ -2320,6 +3098,15 @@ def main():
             resolved_events = st.session_state.get("qa_resolved_events", [])
             render_console_metrics(readiness, resolved_events)
 
+            # DEBUG: Show language detection results
+            st.caption("🔍 Detection Debug: " + " | ".join(
+                f"{lang}={readiness['by_language'][lang].get('language_mismatch', {}).get('detected', '?')}"
+                for lang in sorted(readiness["by_language"].keys())
+            ))
+
+            # Show language mismatch warnings (if any)
+            render_language_mismatch_warnings(readiness, parsed_docs)
+
             issue_langs = [lang for lang, status in status_by_lang.items() if status != "ready"]
             render_issue_chips(readiness, parsed_docs)
 
@@ -2341,11 +3128,22 @@ def main():
                     lang_name = LANGUAGE_NAMES.get(lang, lang)
                     state = readiness["by_language"][lang]["status"]
                     status_label = "✅ Ready" if state == "ready" else ("⚠️ Missing" if state == "missing" else "❌ Invalid")
+                    
+                    # Check for language mismatch
+                    mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
+                    mismatch_label = ""
+                    if mismatch_info.get("detected"):
+                        detected = mismatch_info.get("detected_lang", "unknown").upper()
+                        mismatch_label = f"🌐 Detected as {detected}"
+                    else:
+                        mismatch_label = "✓"
+                    
                     rows.append({
                         "Language": f"{lang} ({lang_name})",
                         "Status": status_label,
                         "Invalid placeholders": readiness["by_language"][lang]["invalid_count"],
                         "Missing issues": len(readiness["by_language"][lang]["missing_issues"]),
+                        "Language Match": mismatch_label,
                     })
 
                 st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=210)
@@ -2695,7 +3493,14 @@ def main():
         )
         
         if "parsed_docs" not in st.session_state:
-            st.info("Upload and parse documents first")
+            st.markdown("""
+            <div class='empty-state'>
+                <div class='empty-state-icon'>📥</div>
+                <p class='empty-state-title'>Ready to Generate</p>
+                <p class='empty-state-body'>Upload and parse your localized documents first. Once done, come back here to validate and export your CMS packages.</p>
+                <span class='empty-state-hint'>← Upload documents to unlock this step</span>
+            </div>
+            """, unsafe_allow_html=True)
         else:
             parsed_docs = st.session_state.get("parsed_docs", [])
             effective_docs = build_effective_parsed_docs(parsed_docs)

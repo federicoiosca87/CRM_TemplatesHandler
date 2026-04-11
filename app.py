@@ -29,6 +29,7 @@ from config import (
 )
 from word_parser import parse_documents_from_folder, ParsedDocument
 from xml_generator import generate_cms_packages
+from report_generator import build_report_from_session
 import re
 import difflib
 import xml.etree.ElementTree as ET
@@ -127,55 +128,106 @@ def validate_placeholders(text: str) -> list[str]:
     return invalid
 
 
-def suggest_placeholder_corrections(text: str, max_suggestions: int = 3) -> dict[str, list[str]]:
-    """Suggest closest valid placeholders for invalid tokens found in text.
+def _split_placeholder_words(token: str) -> list[str]:
+    parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", token)
+    return [p.lower() for p in parts if p]
 
-    Prioritizes exact case-insensitive matches and then word-aware fuzzy matching
-    to avoid noisy suggestions.
-    """
+
+def _score_placeholder_candidate(token: str, candidate: str) -> float:
+    token_lower = token.lower()
+    cand_lower = candidate.lower()
+    ratio = difflib.SequenceMatcher(None, token_lower, cand_lower).ratio()
+    token_words = set(_split_placeholder_words(token))
+    cand_words = set(_split_placeholder_words(candidate))
+    overlap = (len(token_words & cand_words) / max(1, len(token_words))) if token_words else 0.0
+    return ratio + (0.25 * overlap)
+
+
+def _confidence_from_score(score: float) -> str:
+    if score >= 0.93:
+        return "high"
+    if score >= 0.83:
+        return "medium"
+    return "low"
+
+
+def get_placeholder_replacement_plan(text: str, max_suggestions: int = 3) -> dict[str, dict]:
+    """Return replacement plan per invalid token with candidates and confidence tier."""
     invalid_tokens = sorted(set(validate_placeholders(text)))
-    suggestions: dict[str, list[str]] = {}
-
+    plan: dict[str, dict] = {}
     canonical_by_lower = {p.lower(): p for p in VALID_PLACEHOLDERS}
-
-    def split_words(token: str) -> list[str]:
-        # Split CamelCase / acronyms / numbers into comparable lowercase words
-        parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", token)
-        return [p.lower() for p in parts if p]
-
     valid_sorted = sorted(VALID_PLACEHOLDERS)
 
     for token in invalid_tokens:
         token_lower = token.lower()
 
-        # Best case: same token with different casing
+        # Same token with only casing difference is always safe.
         if token_lower in canonical_by_lower:
-            suggestions[token] = [canonical_by_lower[token_lower]]
+            canonical = canonical_by_lower[token_lower]
+            plan[token] = {
+                "candidates": [canonical],
+                "best": canonical,
+                "score": 1.0,
+                "confidence": "high",
+            }
             continue
 
-        token_words = set(split_words(token))
         scored: list[tuple[float, str]] = []
-
         for candidate in valid_sorted:
-            cand_lower = candidate.lower()
-            ratio = difflib.SequenceMatcher(None, token_lower, cand_lower).ratio()
-            if ratio < 0.68:
-                continue
-
-            cand_words = set(split_words(candidate))
+            score = _score_placeholder_candidate(token, candidate)
+            ratio = difflib.SequenceMatcher(None, token_lower, candidate.lower()).ratio()
+            token_words = set(_split_placeholder_words(token))
+            cand_words = set(_split_placeholder_words(candidate))
             overlap = (len(token_words & cand_words) / max(1, len(token_words))) if token_words else 0.0
 
-            # Reject weak textual similarity with no semantic word overlap
+            if ratio < 0.68:
+                continue
             if overlap == 0 and ratio < 0.82:
                 continue
 
-            score = ratio + (0.25 * overlap)
             scored.append((score, candidate))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        suggestions[token] = [candidate for _, candidate in scored[:max_suggestions]]
+        top_candidates = [candidate for _, candidate in scored[:max_suggestions]]
 
-    return suggestions
+        if top_candidates:
+            top_score = scored[0][0]
+            plan[token] = {
+                "candidates": top_candidates,
+                "best": top_candidates[0],
+                "score": top_score,
+                "confidence": _confidence_from_score(top_score),
+            }
+        else:
+            plan[token] = {
+                "candidates": [],
+                "best": None,
+                "score": 0.0,
+                "confidence": "low",
+            }
+
+    return plan
+
+
+def suggest_placeholder_corrections(text: str, max_suggestions: int = 3) -> dict[str, list[str]]:
+    """Backward-compatible simple suggestion mapping for invalid tokens."""
+    plan = get_placeholder_replacement_plan(text=text, max_suggestions=max_suggestions)
+    return {token: details["candidates"] for token, details in plan.items()}
+
+
+def get_safe_placeholder_replacements(text: str) -> tuple[dict[str, str], dict[str, str]]:
+    """Return only high-confidence replacements and token confidence map."""
+    plan = get_placeholder_replacement_plan(text)
+    replacements: dict[str, str] = {}
+    confidence_map: dict[str, str] = {}
+
+    for token, details in plan.items():
+        confidence = details["confidence"]
+        confidence_map[token] = confidence
+        if confidence == "high" and details["best"]:
+            replacements[token] = details["best"]
+
+    return replacements, confidence_map
 
 
 def render_suggestion_hints(field_label: str, suggestions: dict[str, list[str]]) -> None:
@@ -200,22 +252,210 @@ def apply_placeholder_replacements(text: str, replacements: dict[str, str]) -> s
     return updated
 
 
+def collect_resolved_status_transitions(previous: dict[str, str], current: dict[str, str]) -> list[str]:
+    """Collect language statuses that transitioned from issue state to ready."""
+    resolved: list[str] = []
+    for lang, current_state in current.items():
+        prev_state = previous.get(lang)
+        if prev_state in {"missing", "invalid"} and current_state == "ready":
+            resolved.append(f"{lang} ({prev_state} -> ready)")
+    return resolved
+
+
+def choose_next_issue_language(current_lang: str, issue_langs: list[str]) -> str | None:
+    """Choose next issue language relative to current language."""
+    if not issue_langs:
+        return None
+    if current_lang not in issue_langs:
+        return issue_langs[0]
+    idx = issue_langs.index(current_lang)
+    return issue_langs[(idx + 1) % len(issue_langs)]
+
+
+def apply_safe_fixes_for_language(selected_lang: str, selected_doc: ParsedDocument) -> list[str]:
+    """Apply high-confidence placeholder fixes for all editable fields in one language."""
+    changes: list[str] = []
+
+    def apply_on_widget_key(widget_key: str, fallback_text: str, label: str) -> None:
+        current_text = st.session_state.get(widget_key, fallback_text or "")
+        replacements, _ = get_safe_placeholder_replacements(current_text)
+        if not replacements:
+            return
+
+        updated_text = apply_placeholder_replacements(current_text, replacements)
+        if updated_text == current_text:
+            return
+
+        fix_buffer_key = f"fix_buffer_{widget_key}"
+        undo_key = f"undo_{fix_buffer_key}"
+        undo_stack = st.session_state.get(undo_key, [])
+        undo_stack.append(current_text)
+        st.session_state[undo_key] = undo_stack[-5:]
+        st.session_state[widget_key] = updated_text
+
+        replacement_pairs = [f"%%{wrong}%%→%%{right}%%" for wrong, right in replacements.items()]
+        if len(replacement_pairs) > 2:
+            pair_summary = ", ".join(replacement_pairs[:2]) + f" (+{len(replacement_pairs) - 2} more)"
+        else:
+            pair_summary = ", ".join(replacement_pairs)
+        changes.append(f"{label}: {pair_summary}")
+
+    sms_idx = 0
+    if selected_doc.launch_sms:
+        for template in selected_doc.launch_sms.templates:
+            key = f"sms_{selected_lang}_{sms_idx}_Launch_{template.variant}"
+            apply_on_widget_key(key, template.body or "", f"SMS Launch {template.variant}")
+            sms_idx += 1
+    if selected_doc.reminder_sms:
+        for template in selected_doc.reminder_sms.templates:
+            key = f"sms_{selected_lang}_{sms_idx}_Reminder_{template.variant}"
+            apply_on_widget_key(key, template.body or "", f"SMS Reminder {template.variant}")
+            sms_idx += 1
+
+    oms_idx = 0
+    if selected_doc.launch_oms:
+        for template in selected_doc.launch_oms.templates:
+            apply_on_widget_key(
+                f"oms_title_{selected_lang}_{oms_idx}_Launch_{template.variant}",
+                template.title or "",
+                f"OMS Launch {template.variant} Title",
+            )
+            apply_on_widget_key(
+                f"oms_body_{selected_lang}_{oms_idx}_Launch_{template.variant}",
+                template.body or "",
+                f"OMS Launch {template.variant} Body",
+            )
+            apply_on_widget_key(
+                f"oms_cta_{selected_lang}_{oms_idx}_Launch_{template.variant}",
+                template.cta or "",
+                f"OMS Launch {template.variant} CTA",
+            )
+            oms_idx += 1
+    if selected_doc.reminder_oms:
+        for template in selected_doc.reminder_oms.templates:
+            apply_on_widget_key(
+                f"oms_title_{selected_lang}_{oms_idx}_Reminder_{template.variant}",
+                template.title or "",
+                f"OMS Reminder {template.variant} Title",
+            )
+            apply_on_widget_key(
+                f"oms_body_{selected_lang}_{oms_idx}_Reminder_{template.variant}",
+                template.body or "",
+                f"OMS Reminder {template.variant} Body",
+            )
+            apply_on_widget_key(
+                f"oms_cta_{selected_lang}_{oms_idx}_Reminder_{template.variant}",
+                template.cta or "",
+                f"OMS Reminder {template.variant} CTA",
+            )
+            oms_idx += 1
+    if selected_doc.reward_oms:
+        for template in selected_doc.reward_oms.templates:
+            apply_on_widget_key(
+                f"oms_title_{selected_lang}_{oms_idx}_Reward_{template.variant}",
+                template.title or "",
+                f"OMS Claimed Reward {template.variant} Title",
+            )
+            apply_on_widget_key(
+                f"oms_body_{selected_lang}_{oms_idx}_Reward_{template.variant}",
+                template.body or "",
+                f"OMS Claimed Reward {template.variant} Body",
+            )
+            apply_on_widget_key(
+                f"oms_cta_{selected_lang}_{oms_idx}_Reward_{template.variant}",
+                template.cta or "",
+                f"OMS Claimed Reward {template.variant} CTA",
+            )
+            oms_idx += 1
+
+    if selected_doc.tc:
+        apply_on_widget_key(
+            f"tc_sig_{selected_lang}",
+            selected_doc.tc.significant_terms or "",
+            "T&C Significant Terms",
+        )
+        apply_on_widget_key(
+            f"tc_full_{selected_lang}",
+            selected_doc.tc.terms_and_conditions or "",
+            "T&C Full Terms",
+        )
+
+    return changes
+
+
+def count_safe_fixes_for_language(selected_lang: str, selected_doc: ParsedDocument) -> int:
+    """Return how many field-level safe fixes are currently available for a language."""
+    fixable_fields = 0
+
+    def count_on_widget_key(widget_key: str, fallback_text: str) -> None:
+        nonlocal fixable_fields
+        fix_buffer_key = f"fix_buffer_{widget_key}"
+        current_text = st.session_state.get(fix_buffer_key, st.session_state.get(widget_key, fallback_text or ""))
+        replacements, _ = get_safe_placeholder_replacements(current_text)
+        if not replacements:
+            return
+        updated_text = apply_placeholder_replacements(current_text, replacements)
+        if updated_text != current_text:
+            fixable_fields += 1
+
+    sms_idx = 0
+    if selected_doc.launch_sms:
+        for template in selected_doc.launch_sms.templates:
+            key = f"sms_{selected_lang}_{sms_idx}_Launch_{template.variant}"
+            count_on_widget_key(key, template.body or "")
+            sms_idx += 1
+    if selected_doc.reminder_sms:
+        for template in selected_doc.reminder_sms.templates:
+            key = f"sms_{selected_lang}_{sms_idx}_Reminder_{template.variant}"
+            count_on_widget_key(key, template.body or "")
+            sms_idx += 1
+
+    oms_idx = 0
+    if selected_doc.launch_oms:
+        for template in selected_doc.launch_oms.templates:
+            count_on_widget_key(f"oms_title_{selected_lang}_{oms_idx}_Launch_{template.variant}", template.title or "")
+            count_on_widget_key(f"oms_body_{selected_lang}_{oms_idx}_Launch_{template.variant}", template.body or "")
+            count_on_widget_key(f"oms_cta_{selected_lang}_{oms_idx}_Launch_{template.variant}", template.cta or "")
+            oms_idx += 1
+    if selected_doc.reminder_oms:
+        for template in selected_doc.reminder_oms.templates:
+            count_on_widget_key(f"oms_title_{selected_lang}_{oms_idx}_Reminder_{template.variant}", template.title or "")
+            count_on_widget_key(f"oms_body_{selected_lang}_{oms_idx}_Reminder_{template.variant}", template.body or "")
+            count_on_widget_key(f"oms_cta_{selected_lang}_{oms_idx}_Reminder_{template.variant}", template.cta or "")
+            oms_idx += 1
+    if selected_doc.reward_oms:
+        for template in selected_doc.reward_oms.templates:
+            count_on_widget_key(f"oms_title_{selected_lang}_{oms_idx}_Reward_{template.variant}", template.title or "")
+            count_on_widget_key(f"oms_body_{selected_lang}_{oms_idx}_Reward_{template.variant}", template.body or "")
+            count_on_widget_key(f"oms_cta_{selected_lang}_{oms_idx}_Reward_{template.variant}", template.cta or "")
+            oms_idx += 1
+
+    if selected_doc.tc:
+        count_on_widget_key(f"tc_sig_{selected_lang}", selected_doc.tc.significant_terms or "")
+        count_on_widget_key(f"tc_full_{selected_lang}", selected_doc.tc.terms_and_conditions or "")
+
+    return fixable_fields
+
+
 def render_invalid_placeholder_assistant(
     field_label: str,
     text: str,
     fix_buffer_key: str,
     button_key: str,
 ) -> None:
-    """Render compact invalid placeholder warning + smart auto-fix action for a field."""
+    """Render compact invalid placeholder warning with confidence-aware fix/undo."""
     invalid = validate_placeholders(text)
     if not invalid:
         return
 
     invalid_labels = ", ".join([f"%%{p}%%" for p in invalid])
-    suggestions = suggest_placeholder_corrections(text)
-    replacements = {wrong: candidates[0] for wrong, candidates in suggestions.items() if candidates}
+    plan = get_placeholder_replacement_plan(text)
+    replacements, confidence_map = get_safe_placeholder_replacements(text)
+    suggestions = {token: details["candidates"] for token, details in plan.items()}
+    undo_key = f"undo_{fix_buffer_key}"
+    undo_stack = st.session_state.get(undo_key, [])
 
-    col_msg, col_apply = st.columns([7, 1])
+    col_msg, col_actions = st.columns([7, 2])
     with col_msg:
         st.markdown(
             (
@@ -234,36 +474,57 @@ def render_invalid_placeholder_assistant(
             unsafe_allow_html=True,
         )
 
-    with col_apply:
+    with col_actions:
         has_fixes = len(replacements) > 0
         if len(replacements) == 1:
-            apply_label = "Fix"
+            apply_label = "Fix safe"
         else:
-            apply_label = f"Fix {len(replacements)}"
+            apply_label = f"Fix safe ({len(replacements)})"
         if st.button(
             apply_label,
             key=button_key,
             type="primary",
             width="stretch",
             disabled=not has_fixes,
-            help="Apply best placeholder correction(s) for this field only.",
+            help="Apply only high-confidence placeholder correction(s) for this field.",
         ):
-            # Store fixed content in a separate buffer key to avoid widget state conflict
+            undo_stack.append(text)
+            st.session_state[undo_key] = undo_stack[-5:]
             fixed_content = apply_placeholder_replacements(text, replacements)
             st.session_state[fix_buffer_key] = fixed_content
+            st.session_state["qa_advance_after_fix"] = True
             st.rerun()
 
-    if replacements:
-        # Build single-line suggestion summary
-        suggestion_parts = []
-        for wrong_token, candidates in suggestions.items():
-            if candidates:
-                best = candidates[0]
-                suggestion_parts.append(f"%%{wrong_token}%% → %%{best}%%")
-        
-        if suggestion_parts:
-            combined_suggestion = " • ".join(suggestion_parts)
-            st.caption(f"💡 {combined_suggestion}")
+        if st.button(
+            "Undo",
+            key=f"undo_btn_{button_key}",
+            type="secondary",
+            width="stretch",
+            disabled=len(undo_stack) == 0,
+            help="Restore previous value for this field.",
+        ):
+            previous_text = undo_stack.pop()
+            st.session_state[undo_key] = undo_stack
+            st.session_state[fix_buffer_key] = previous_text
+            st.rerun()
+
+    high_tokens = [f"%%{t}%%→%%{plan[t]['best']}%%" for t in plan if confidence_map.get(t) == "high" and plan[t]["best"]]
+    medium_tokens = [f"%%{t}%%→%%{plan[t]['best']}%%" for t in plan if confidence_map.get(t) == "medium" and plan[t]["best"]]
+    low_tokens = [f"%%{t}%%" for t in plan if confidence_map.get(t) == "low"]
+
+    summary_parts = []
+    if high_tokens:
+        summary_parts.append("H: " + ", ".join(high_tokens))
+    if medium_tokens:
+        summary_parts.append("M: " + ", ".join(medium_tokens))
+    if low_tokens:
+        summary_parts.append("L: " + ", ".join(low_tokens))
+
+    if summary_parts:
+        st.caption("💡 " + " | ".join(summary_parts))
+
+    if not replacements and suggestions:
+        st.caption("No high-confidence auto-fix available. Review medium/low suggestions manually.")
     else:
         st.caption("No safe auto-fix available for this field.")
 
@@ -1180,9 +1441,16 @@ def main():
         
         # Send Conditions
         st.subheader("Send Conditions")
+        default_conditions = {
+            "NotOptedIn",
+            "JoinedCampaign",
+            "CampaignHasStarted",
+            "ClaimedReward-TemplateA",
+            "ClaimedReward-TemplateB",
+        }
         selected_conditions = []
         for condition in SEND_CONDITIONS:
-            if st.checkbox(condition, value=condition in ["NotOptedIn", "JoinedCampaign", "CampaignHasStarted"]):
+            if st.checkbox(condition, value=condition in default_conditions):
                 selected_conditions.append(condition)
         
         # Custom send condition
@@ -1281,6 +1549,8 @@ def main():
                         # Store in session state
                         st.session_state["parsed_docs"] = parsed_docs
                         st.session_state["offer_key"] = offer_key
+                        st.session_state["document_name"] = uploaded_file.name
+                        st.session_state["upload_timestamp"] = datetime.now()
                         st.session_state["task_type"] = task_type
                         st.session_state["reward_type"] = reward_type
                         st.session_state["bonus_product"] = bonus_product
@@ -1414,6 +1684,26 @@ def main():
                 f"❌ **Invalid:** {readiness['invalid_count']}"
             )
 
+            status_by_lang = {
+                doc.language_code: readiness["by_language"][doc.language_code]["status"]
+                for doc in parsed_docs
+            }
+            previous_status_by_lang = st.session_state.get("qa_prev_status_by_lang", {})
+            newly_resolved = collect_resolved_status_transitions(previous_status_by_lang, status_by_lang)
+            if newly_resolved:
+                resolved_events = st.session_state.get("qa_resolved_events", [])
+                for event in newly_resolved:
+                    if event not in resolved_events:
+                        resolved_events.append(event)
+                st.session_state["qa_resolved_events"] = resolved_events[-6:]
+            st.session_state["qa_prev_status_by_lang"] = status_by_lang
+
+            resolved_events = st.session_state.get("qa_resolved_events", [])
+            if resolved_events:
+                st.caption("Resolved this session: " + " | ".join(resolved_events[-3:]))
+
+            issue_langs = [lang for lang, status in status_by_lang.items() if status != "ready"]
+
             if readiness["has_issues"]:
                 issue_tokens = []
                 for doc in parsed_docs:
@@ -1440,17 +1730,18 @@ def main():
                         st.caption("Issues: " + " | ".join(issue_tokens))
 
                         label_to_lang = {label: lang for lang, label in issue_buttons}
-                        select_col, open_col, spacer_col = st.columns([5, 1, 6])
-                        with select_col:
+                        with st.popover("Actions"):
                             selected_issue_label = st.selectbox(
                                 "Issue quick jump",
                                 list(label_to_lang.keys()),
                                 key="qa_issue_quick_select",
                                 label_visibility="collapsed",
                             )
-                        with open_col:
-                            if st.button("Open", key="qa_issue_quick_open", width="stretch", type="secondary"):
+                            if st.button("Open selected", key="qa_issue_quick_open", width="stretch", type="secondary"):
                                 st.session_state["qa_target_lang"] = label_to_lang[selected_issue_label]
+                                st.rerun()
+                            if st.button("Open first issue", key="qa_issue_open_first", width="stretch"):
+                                st.session_state["qa_target_lang"] = issue_buttons[0][0]
                                 st.rerun()
                     else:
                         st.caption("Issues: " + " | ".join(issue_tokens))
@@ -1487,8 +1778,22 @@ def main():
                 name = LANGUAGE_NAMES.get(code, code)
                 return f"{code} - {name}"
             
-            # Use qa_target_lang if set (from quick-action buttons), otherwise default to first
-            default_lang = st.session_state.get("qa_target_lang", languages[0] if languages else None)
+            default_lang = st.session_state.get("qa_target_lang")
+
+            if st.session_state.get("qa_advance_after_fix"):
+                current_lang = st.session_state.get("qa_last_selected_lang", "")
+                if current_lang in issue_langs:
+                    default_lang = current_lang
+                else:
+                    default_lang = choose_next_issue_language(current_lang, issue_langs) or current_lang
+                st.session_state["qa_advance_after_fix"] = False
+
+            if not default_lang:
+                if issue_langs:
+                    default_lang = issue_langs[0]
+                else:
+                    default_lang = languages[0] if languages else None
+
             if default_lang and default_lang in languages:
                 default_index = languages.index(default_lang)
                 if "qa_target_lang" in st.session_state:
@@ -1502,10 +1807,52 @@ def main():
                 format_func=format_language,
                 index=default_index,
             )
+
+            previous_selected_lang = st.session_state.get("qa_last_selected_lang")
+            if previous_selected_lang and previous_selected_lang != selected_lang:
+                st.session_state.pop("qa_last_fix_summary", None)
+
+            st.session_state["qa_last_selected_lang"] = selected_lang
             
             selected_doc = next((d for d in parsed_docs if d.language_code == selected_lang), None)
             
             if selected_doc:
+                available_safe_fixes = count_safe_fixes_for_language(selected_lang, selected_doc)
+                if available_safe_fixes > 0:
+                    fix_col, summary_col = st.columns([2, 10])
+                    with fix_col:
+                        if st.button(
+                            f"Fix safe in {selected_lang}",
+                            key=f"fix_all_safe_{selected_lang}",
+                            width="stretch",
+                            type="secondary",
+                            help="Apply high-confidence placeholder fixes across SMS/OMS/T&C in this language.",
+                        ):
+                            changes = apply_safe_fixes_for_language(selected_lang, selected_doc)
+                            if changes:
+                                st.session_state["qa_advance_after_fix"] = True
+                                history = st.session_state.get("qa_fix_history", [])
+                                history.append(f"{selected_lang}: " + ", ".join(changes[:4]))
+                                st.session_state["qa_fix_history"] = history[-8:]
+                                st.session_state["qa_last_fix_summary"] = (
+                                    f"Applied safe fixes in {selected_lang}: " + ", ".join(changes[:5])
+                                )
+                                st.rerun()
+                            else:
+                                st.session_state["qa_last_fix_summary"] = (
+                                    f"No high-confidence placeholder fixes found for {selected_lang}."
+                                )
+                                st.rerun()
+
+                    with summary_col:
+                        st.caption(
+                            f"{available_safe_fixes} safe fixable field(s). "
+                            "Applies only high-confidence fixes. Use per-field Undo if needed."
+                        )
+
+                if "qa_last_fix_summary" in st.session_state:
+                    st.caption(st.session_state["qa_last_fix_summary"])
+
                 col1, col2 = st.columns(2)
                 
                 with col1:
@@ -1521,15 +1868,18 @@ def main():
                     if all_sms_templates:
                         for idx, (sms_type, template) in enumerate(all_sms_templates):
                             sms_body = template.body or ""
-                            char_count, color, char_msg = get_sms_char_info(sms_body)
-                            invalid_placeholders = validate_placeholders(sms_body)
-                            missing = check_missing_content("SMS", body=sms_body)
+                            sms_key = f"sms_{selected_lang}_{idx}_{sms_type}_{template.variant}"
+                            sms_fix_buffer = f"fix_buffer_{sms_key}"
+                            sms_effective = st.session_state.get(sms_fix_buffer, st.session_state.get(sms_key, sms_body))
+
+                            char_count, color, char_msg = get_sms_char_info(sms_effective)
+                            invalid_placeholders = validate_placeholders(sms_effective)
+                            missing = check_missing_content("SMS", body=sms_effective)
                             
                             status_icon = "✅" if not invalid_placeholders and not missing and color == "green" else "⚠️"
                             expander_label = f"{status_icon} {sms_type} - Template {template.variant} ({template.send_condition})"
                             
                             with st.expander(expander_label):
-                                sms_key = f"sms_{selected_lang}_{idx}_{sms_type}_{template.variant}"
                                 fix_buffer_key = f"fix_buffer_{sms_key}"
                                 # Sync fix buffer to widget state and clear buffer
                                 if fix_buffer_key in st.session_state:
@@ -1584,22 +1934,27 @@ def main():
                             oms_title = template.title or ""
                             oms_body = template.body or ""
                             oms_cta = template.cta or ""
+
+                            title_key = f"oms_title_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+                            body_key = f"oms_body_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+                            cta_key = f"oms_cta_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+                            title_fix_buffer = f"fix_buffer_{title_key}"
+                            body_fix_buffer = f"fix_buffer_{body_key}"
+                            cta_fix_buffer = f"fix_buffer_{cta_key}"
+
+                            effective_title = st.session_state.get(title_fix_buffer, st.session_state.get(title_key, oms_title))
+                            effective_body = st.session_state.get(body_fix_buffer, st.session_state.get(body_key, oms_body))
+                            effective_cta = st.session_state.get(cta_fix_buffer, st.session_state.get(cta_key, oms_cta))
                             
-                            all_text = oms_title + " " + oms_body + " " + oms_cta
+                            all_text = effective_title + " " + effective_body + " " + effective_cta
                             invalid_placeholders = validate_placeholders(all_text)
-                            missing = check_missing_content("OMS", title=oms_title, body=oms_body, cta=oms_cta)
+                            missing = check_missing_content("OMS", title=effective_title, body=effective_body, cta=effective_cta)
                             
                             status_icon = "✅" if not invalid_placeholders and not missing else "⚠️"
                             expander_label = f"{status_icon} {oms_type} - Template {template.variant} ({template.send_condition})"
                             
                             with st.expander(expander_label):
-                                title_key = f"oms_title_{selected_lang}_{idx}_{oms_type}_{template.variant}"
-                                body_key = f"oms_body_{selected_lang}_{idx}_{oms_type}_{template.variant}"
-                                cta_key = f"oms_cta_{selected_lang}_{idx}_{oms_type}_{template.variant}"
                                 
-                                title_fix_buffer = f"fix_buffer_{title_key}"
-                                body_fix_buffer = f"fix_buffer_{body_key}"
-                                cta_fix_buffer = f"fix_buffer_{cta_key}"
                                 
                                 # Sync fix buffers to widget states and clear buffers
                                 if title_fix_buffer in st.session_state:
@@ -1826,6 +2181,7 @@ def main():
                 st.markdown("**2. OMS Package**")
                 st.caption("CampaignWizardOmsTemplate")
                 st.write("• Title, body, CTA")
+                st.write("• Includes ClaimedReward communications by default")
                 st.write("• Per-language XML files")
             
             with pkg_col3:
@@ -1833,6 +2189,53 @@ def main():
                 st.caption("CampaignWizardTCTemplate")
                 st.write("• Significant terms")
                 st.write("• Full T&Cs")
+            
+            st.divider()
+            
+            # Audit Report Metadata
+            st.subheader("📊 Audit Report Metadata (Optional)")
+            st.caption("Provide additional context for the audit report to be generated with your packages.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                audit_brand = st.text_input(
+                    "Brand Name",
+                    value=st.session_state.get("audit_brand", ""),
+                    placeholder="e.g., Betsson, Bingo, CasinoClub",
+                    key="audit_brand_input",
+                )
+                st.session_state["audit_brand"] = audit_brand
+            
+            with col2:
+                audit_template_version = st.text_input(
+                    "Template Version",
+                    value=st.session_state.get("audit_template_version", "1.0"),
+                    placeholder="e.g., 1.0, 2.1, 2026-Q1",
+                    key="audit_template_version_input",
+                )
+                st.session_state["audit_template_version"] = audit_template_version
+            
+            audit_markets = st.multiselect(
+                "Markets Included",
+                options=[
+                    "Realm", "Greece", "Italy", "Alta", "Peru", "Argentina",
+                    "Brazil", "Chile", "Colombia", "Mexico", "Sweden", "Norway",
+                    "Finland", "Estonia", "Latvia", "Turkey", "Poland",
+                ],
+                default=st.session_state.get("audit_markets", []),
+                help="Select all markets this campaign will be deployed to",
+                key="audit_markets_input",
+            )
+            st.session_state["audit_markets"] = audit_markets
+            
+            audit_notes = st.text_area(
+                "Session Notes",
+                value=st.session_state.get("audit_notes", ""),
+                height=80,
+                placeholder="Optional: Document any special conditions, testing notes, or issues encountered during creation.",
+                key="audit_notes_input",
+            )
+            st.session_state["audit_notes"] = audit_notes
             
             st.divider()
             
@@ -1963,6 +2366,42 @@ def main():
                         )
                         
                         st.success("✅ CMS packages generated successfully!")
+                        
+                        # Generate Audit Report
+                        st.subheader("📋 Audit Report")
+                        
+                        audit_report = build_report_from_session(
+                            document_name=st.session_state.get("document_name", "Unknown"),
+                            upload_timestamp=st.session_state.get("upload_timestamp", datetime.now()),
+                            parsed_docs=parsed_docs,
+                            generated_paths=generated_paths,
+                            qa_issues=st.session_state.get("qa_issues", {}),
+                            fixes_applied=st.session_state.get("qa_fixes_applied", {}),
+                            language_names=LANGUAGE_NAMES,
+                            brand=st.session_state.get("audit_brand", "Unknown"),
+                            template_version=st.session_state.get("audit_template_version", "1.0"),
+                            markets=st.session_state.get("audit_markets", []),
+                            user_notes=st.session_state.get("audit_notes", ""),
+                        )
+                        
+                        report_markdown = audit_report.generate_markdown_report()
+                        
+                        # Display report summary
+                        with st.expander("📄 View Full Audit Report", expanded=False):
+                            st.markdown(report_markdown)
+                        
+                        # Download button for report
+                        report_filename = f"AuditReport_{st.session_state.get('audit_brand', 'Unknown')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+                        st.download_button(
+                            label="📥 Download Audit Report (Markdown)",
+                            data=report_markdown.encode(),
+                            file_name=report_filename,
+                            mime="text/markdown",
+                            width="stretch",
+                            help="Complete audit trail including metadata, language completeness, fixes applied, and file manifest",
+                        )
+                        
+                        st.divider()
                         
                         # Create download buttons for each package
                         st.subheader("📥 Download Packages")

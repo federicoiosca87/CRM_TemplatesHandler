@@ -313,3 +313,31 @@ CMS_DEFAULTS = {
     "ContentTypeBrand": "Common",
     "ContentTypeProduct": "Common",
 }
+
+# Validation Rules by Brand
+# Define per-brand placeholder restrictions. Each rule:
+# - key: placeholder token name (without %% markers)
+# - value: dict with:
+#   - allowed_contexts: tuple of field types where this token is allowed ("sms", "oms_title", "oms_body", "tc")
+#   - reason: brief explanation of the rule
+#
+# Example: FreespinValue is never allowed in SMS for Brand X due to compliance
+BRAND_VALIDATION_RULES = {
+    "BrandX": {
+        "FreespinValue": {
+            "allowed_contexts": ("oms_title", "oms_body", "tc"),
+            "reason": "SMS context restricted per compliance review (Dec 2025)",
+        },
+        "BonusAmount": {
+            "allowed_contexts": ("oms_body", "tc"),
+            "reason": "Do not advertise bonus amount in title or SMS (brand positioning)",
+        },
+    },
+    "BrandY": {
+        "WagerTaskAmount": {
+            "allowed_contexts": ("oms_title", "oms_body"),
+            "reason": "SMS not used for wager terms (T&Cs only)",
+        },
+    },
+    # Add more brands as validation rules are defined
+}

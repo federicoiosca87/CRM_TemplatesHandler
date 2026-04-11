@@ -244,7 +244,7 @@ def render_invalid_placeholder_assistant(
             apply_label,
             key=button_key,
             type="primary",
-            use_container_width=True,
+            width="stretch",
             disabled=not has_fixes,
             help="Apply best placeholder correction(s) for this field only.",
         ):
@@ -1388,7 +1388,7 @@ def main():
                         table_height = 40 + (len(summary_data) * 35) + 10
                         st.dataframe(
                             pd.DataFrame(summary_data), 
-                            use_container_width=True,
+                            width="stretch",
                             height=table_height,
                             hide_index=True
                         )
@@ -1449,7 +1449,7 @@ def main():
                                 label_visibility="collapsed",
                             )
                         with open_col:
-                            if st.button("Open", key="qa_issue_quick_open", use_container_width=True, type="secondary"):
+                            if st.button("Open", key="qa_issue_quick_open", width="stretch", type="secondary"):
                                 st.session_state["qa_target_lang"] = label_to_lang[selected_issue_label]
                                 st.rerun()
                     else:
@@ -1477,7 +1477,7 @@ def main():
                         "Missing issues": len(readiness["by_language"][lang]["missing_issues"]),
                     })
 
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=210)
+                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=210)
             
             # Language selector with full names
             languages = [doc.language_code for doc in parsed_docs]
@@ -1873,7 +1873,7 @@ def main():
             
             st.divider()
             
-            if st.button("🚀 Generate CMS Packages", type="primary", use_container_width=True, disabled=not can_generate):
+            if st.button("🚀 Generate CMS Packages", type="primary", width="stretch", disabled=not can_generate):
                 with st.spinner("Generating CMS packages..."):
                     try:
                         # Sync edited values from preview back to parsed_docs
@@ -1988,7 +1988,7 @@ def main():
                                 data=zip_buffer.getvalue(),
                                 file_name=filename,
                                 mime="application/zip",
-                                use_container_width=True,
+                                width="stretch",
                                 help=f"Contains {template_type} templates for all languages",
                             )
                         

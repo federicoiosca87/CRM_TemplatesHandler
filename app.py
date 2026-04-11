@@ -32,6 +32,7 @@ from xml_generator import generate_cms_packages
 import re
 import difflib
 import xml.etree.ElementTree as ET
+from collections import Counter
 
 
 # =============================================================================
@@ -126,10 +127,264 @@ def validate_placeholders(text: str) -> list[str]:
     return invalid
 
 
-def highlight_placeholders_campaign_style(html_text: str) -> str:
-    """Highlight placeholders with campaign-style status colors.
+def suggest_placeholder_corrections(text: str, max_suggestions: int = 3) -> dict[str, list[str]]:
+    """Suggest closest valid placeholders for invalid tokens found in text.
 
-    Available placeholders are shown in amber. Unknown placeholders are shown in red.
+    Prioritizes exact case-insensitive matches and then word-aware fuzzy matching
+    to avoid noisy suggestions.
+    """
+    invalid_tokens = sorted(set(validate_placeholders(text)))
+    suggestions: dict[str, list[str]] = {}
+
+    canonical_by_lower = {p.lower(): p for p in VALID_PLACEHOLDERS}
+
+    def split_words(token: str) -> list[str]:
+        # Split CamelCase / acronyms / numbers into comparable lowercase words
+        parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", token)
+        return [p.lower() for p in parts if p]
+
+    valid_sorted = sorted(VALID_PLACEHOLDERS)
+
+    for token in invalid_tokens:
+        token_lower = token.lower()
+
+        # Best case: same token with different casing
+        if token_lower in canonical_by_lower:
+            suggestions[token] = [canonical_by_lower[token_lower]]
+            continue
+
+        token_words = set(split_words(token))
+        scored: list[tuple[float, str]] = []
+
+        for candidate in valid_sorted:
+            cand_lower = candidate.lower()
+            ratio = difflib.SequenceMatcher(None, token_lower, cand_lower).ratio()
+            if ratio < 0.68:
+                continue
+
+            cand_words = set(split_words(candidate))
+            overlap = (len(token_words & cand_words) / max(1, len(token_words))) if token_words else 0.0
+
+            # Reject weak textual similarity with no semantic word overlap
+            if overlap == 0 and ratio < 0.82:
+                continue
+
+            score = ratio + (0.25 * overlap)
+            scored.append((score, candidate))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        suggestions[token] = [candidate for _, candidate in scored[:max_suggestions]]
+
+    return suggestions
+
+
+def render_suggestion_hints(field_label: str, suggestions: dict[str, list[str]]) -> None:
+    """Render concise inline typo hints for invalid placeholders."""
+    for wrong_token, candidates in suggestions.items():
+        if candidates:
+            best = f"%%{candidates[0]}%%"
+            if len(candidates) > 1:
+                alternatives = ", ".join([f"%%{c}%%" for c in candidates[1:]])
+                st.caption(f"💡 {field_label}: `%%{wrong_token}%%` -> try `{best}` (alternatives: {alternatives})")
+            else:
+                st.caption(f"💡 {field_label}: `%%{wrong_token}%%` -> try `{best}`")
+        else:
+            st.caption(f"💡 {field_label}: no close match found for `%%{wrong_token}%%`")
+
+
+def apply_placeholder_replacements(text: str, replacements: dict[str, str]) -> str:
+    """Apply placeholder token replacements like %%Wrong%% -> %%Right%% to a text block."""
+    updated = text or ""
+    for wrong_token, right_token in replacements.items():
+        updated = updated.replace(f"%%{wrong_token}%%", f"%%{right_token}%%")
+    return updated
+
+
+def render_invalid_placeholder_assistant(
+    field_label: str,
+    text: str,
+    fix_buffer_key: str,
+    button_key: str,
+) -> None:
+    """Render compact invalid placeholder warning + smart auto-fix action for a field."""
+    invalid = validate_placeholders(text)
+    if not invalid:
+        return
+
+    invalid_labels = ", ".join([f"%%{p}%%" for p in invalid])
+    suggestions = suggest_placeholder_corrections(text)
+    replacements = {wrong: candidates[0] for wrong, candidates in suggestions.items() if candidates}
+
+    col_msg, col_apply = st.columns([7, 1])
+    with col_msg:
+        st.markdown(
+            (
+                "<div style='"
+                "padding:7px 10px;"
+                "border-radius:8px;"
+                "background:#4a2229;"
+                "border:1px solid #7a3641;"
+                "color:#ffd9de;"
+                "font-size:0.92rem;"
+                "margin:2px 0 2px 0;"
+                "'>"
+                f"✖ {field_label}: invalid placeholders {invalid_labels}"
+                "</div>"
+            ),
+            unsafe_allow_html=True,
+        )
+
+    with col_apply:
+        has_fixes = len(replacements) > 0
+        if len(replacements) == 1:
+            apply_label = "Fix"
+        else:
+            apply_label = f"Fix {len(replacements)}"
+        if st.button(
+            apply_label,
+            key=button_key,
+            type="primary",
+            use_container_width=True,
+            disabled=not has_fixes,
+            help="Apply best placeholder correction(s) for this field only.",
+        ):
+            # Store fixed content in a separate buffer key to avoid widget state conflict
+            fixed_content = apply_placeholder_replacements(text, replacements)
+            st.session_state[fix_buffer_key] = fixed_content
+            st.rerun()
+
+    if replacements:
+        # Build single-line suggestion summary
+        suggestion_parts = []
+        for wrong_token, candidates in suggestions.items():
+            if candidates:
+                best = candidates[0]
+                suggestion_parts.append(f"%%{wrong_token}%% → %%{best}%%")
+        
+        if suggestion_parts:
+            combined_suggestion = " • ".join(suggestion_parts)
+            st.caption(f"💡 {combined_suggestion}")
+    else:
+        st.caption("No safe auto-fix available for this field.")
+
+
+def analyze_placeholders(text: str) -> dict:
+    """Analyze placeholder usage stats for health panel."""
+    if not text:
+        return {
+            "total": 0,
+            "valid": 0,
+            "invalid": 0,
+            "duplicate_occurrences": 0,
+            "duplicate_unique": 0,
+            "duplicate_details": {},
+            "invalid_tokens": [],
+        }
+
+    found = re.findall(r'%%([A-Za-z0-9_]+)%%', text)
+    valid = [p for p in found if p in VALID_PLACEHOLDERS]
+    invalid = [p for p in found if p not in VALID_PLACEHOLDERS]
+
+    counter = Counter(found)
+    duplicates = {k: v for k, v in counter.items() if v > 1}
+    duplicate_occurrences = sum(v - 1 for v in duplicates.values())
+
+    return {
+        "total": len(found),
+        "valid": len(valid),
+        "invalid": len(invalid),
+        "duplicate_occurrences": duplicate_occurrences,
+        "duplicate_unique": len(duplicates),
+        "duplicate_details": duplicates,
+        "invalid_tokens": sorted(set(invalid)),
+    }
+
+
+def get_placeholder_sample_value(placeholder_name: str) -> str:
+    """Return a realistic sample value for a known placeholder."""
+    # Hard requirements and explicit high-confidence mappings first
+    explicit_values = {
+        "BrandName": "Betsson",
+        "BrandDomain": "betsson.com",
+        "PalantirDomain": "betsson",
+        "OfferId": "123456",
+        "CampaignEndDateAndTime": "11 Apr 2026 23:59",
+        "LastContentChangeLocalTimeStamp": "11 Apr 2026 09:45",
+        "CustomerFirstName": "Alex",
+        "CustomerLastName": "Johnson",
+        "CustomerGuid": "8f3a9c2d",
+        "CustomerTotalBalance": "10 €",
+        "NrOfFreespins": "50",
+        "FreespinGames": "Book of Dead",
+        "FreespinValidityDays": "7",
+        "FreespinValidityHours": "12",
+        "FreespinValue": "10 €",
+        "WinningsLifetime": "7 days",
+        "WageringRequirementMultiplier": "30x",
+        "BonusAmount": "10 €",
+        "BonusLifetime": "14 days",
+        "BonusDescription": "Casino bonus",
+        "CashRewardAmount": "10 €",
+        "SBRewardStake": "10 €",
+        "SBRewardMinSelections": "3",
+        "SBRewardClaimableDuration": "7 days",
+        "SBRewardOn": "Sportsbook",
+        "TaskMinimumOdds": "1.50",
+        "TaskMinimumSelections": "3",
+        "TaskIncludedBetTypes": "Single, Acca",
+        "TaskIncludedBettingMarkets": "1X2, Over/Under",
+        "SBWagerTaskOn": "Sportsbook",
+        "WagerTaskOn": "Casino",
+        "DepositExcludedPayments": "Skrill, Neteller",
+        "DepositFulfillmentAmount": "10 €",
+        "NetLossGameplayTaskOn": "Casino",
+        "NetLossGameplayPercentage": "10%",
+        "NetLossGameplayMinimumAmount": "10 €",
+        "NetLossGameplayMaxReceivedAmount": "10 €",
+        "NetLossGameplayMinimumGameRounds": "20",
+        "NetLossGameplayMinimumStakeRound": "1 €",
+        "NetLossSportsbookTaskOn": "Sportsbook",
+        "NetLossSportsbookPercentage": "10%",
+        "NetLossSportsbookMinimumAmount": "10 €",
+        "NetLossSportsbookMaxReceivedAmount": "10 €",
+        "NetLossSportsbookMinimumWager": "10 €",
+        "NetLossSportsbookMinimumOdds": "1.50",
+        "NetLossSportsbookBetType": "Single",
+    }
+
+    if placeholder_name in explicit_values:
+        return explicit_values[placeholder_name]
+
+    # Heuristics for placeholders not explicitly listed
+    name_lower = placeholder_name.lower()
+
+    # User requirement: monetary placeholders should render as 10 €
+    money_hints = ["amount", "stake", "value", "balance", "cash", "wager", "minimum"]
+    if any(hint in name_lower for hint in money_hints) and "odds" not in name_lower and "days" not in name_lower:
+        return "10 €"
+
+    if "percentage" in name_lower:
+        return "10%"
+    if "odds" in name_lower:
+        return "1.50"
+    if "days" in name_lower:
+        return "7"
+    if "hours" in name_lower:
+        return "12"
+    if "games" in name_lower:
+        return "Book of Dead"
+    if "brand" in name_lower:
+        return "Betsson"
+
+    return "Sample value"
+
+
+def render_placeholders_campaign_style(html_text: str, mode: str = "realistic") -> str:
+    """Render placeholders in preview.
+
+    Modes:
+    - realistic: valid placeholders replaced by sample values; invalid shown in red.
+    - raw: valid placeholders shown in amber token badges; invalid shown in red.
     """
     if not html_text:
         return ""
@@ -139,6 +394,24 @@ def highlight_placeholders_campaign_style(html_text: str) -> str:
         full_token = f"%%{placeholder_name}%%"
 
         if placeholder_name in VALID_PLACEHOLDERS:
+            if mode == "realistic":
+                sample_value = get_placeholder_sample_value(placeholder_name)
+                return (
+                    '<span style="'
+                    'background:#e6f4ea;'
+                    'color:#1f5f32;'
+                    'border:1px dashed #7ac68d;'
+                    'border-radius:6px;'
+                    'padding:0 4px;'
+                    'white-space:nowrap;'
+                    'display:inline-block;'
+                    '" '
+                    f'title="{full_token}">'
+                    f'{sample_value}'
+                    '</span>'
+                )
+
+            # raw mode (default visual style for valid placeholders)
             return (
                 '<span style="'
                 'background:#ffefbf;'
@@ -217,16 +490,16 @@ def image_file_to_data_uri(image_path: Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
-def render_oms_desktop_preview(title: str, body: str, cta: str, image_data_uri: str) -> str:
+def render_oms_desktop_preview(title: str, body: str, cta: str, image_data_uri: str, placeholder_mode: str = "realistic") -> str:
     """Render a desktop OMS card preview that mimics production layout."""
     import html as html_module
 
-    safe_title = highlight_placeholders_campaign_style(html_module.escape(title or ""))
-    safe_cta = highlight_placeholders_campaign_style(html_module.escape(cta or "Opt-in"))
+    safe_title = render_placeholders_campaign_style(html_module.escape(title or ""), mode=placeholder_mode)
+    safe_cta = render_placeholders_campaign_style(html_module.escape(cta or "Opt-in"), mode=placeholder_mode)
     received_text = datetime.now().strftime("Received on %A, %d %B %Y at %H:%M")
     safe_received = html_module.escape(received_text)
     body_html = bbcode_to_html(body or "", highlight_placeholders=False)
-    body_html = highlight_placeholders_campaign_style(body_html)
+    body_html = render_placeholders_campaign_style(body_html, mode=placeholder_mode)
 
     image_html = ""
     if image_data_uri:
@@ -590,6 +863,90 @@ def generate_missing_content_report(parsed_docs: list) -> dict:
         report["summary"].append("✅ All languages have complete content")
     
     return report
+
+
+def generate_invalid_placeholder_report(parsed_docs: list) -> dict:
+    """Generate invalid placeholder report across all languages."""
+    report = {
+        "total_invalid_occurrences": 0,
+        "by_language": {},
+    }
+
+    for doc in parsed_docs:
+        lang = doc.language_code
+        invalid_tokens: list[str] = []
+
+        # OMS
+        if doc.launch_oms:
+            for t in doc.launch_oms.templates:
+                invalid_tokens.extend(validate_placeholders((t.title or "") + " " + (t.body or "") + " " + (t.cta or "")))
+        if doc.reminder_oms:
+            for t in doc.reminder_oms.templates:
+                invalid_tokens.extend(validate_placeholders((t.title or "") + " " + (t.body or "") + " " + (t.cta or "")))
+        if doc.reward_oms:
+            for t in doc.reward_oms.templates:
+                invalid_tokens.extend(validate_placeholders((t.title or "") + " " + (t.body or "") + " " + (t.cta or "")))
+
+        # SMS
+        if doc.launch_sms:
+            for t in doc.launch_sms.templates:
+                invalid_tokens.extend(validate_placeholders(t.body or ""))
+        if doc.reminder_sms:
+            for t in doc.reminder_sms.templates:
+                invalid_tokens.extend(validate_placeholders(t.body or ""))
+
+        # T&C
+        if doc.tc:
+            invalid_tokens.extend(validate_placeholders((doc.tc.significant_terms or "") + " " + (doc.tc.terms_and_conditions or "")))
+
+        report["by_language"][lang] = {
+            "count": len(invalid_tokens),
+            "tokens": sorted(set(invalid_tokens)),
+        }
+        report["total_invalid_occurrences"] += len(invalid_tokens)
+
+    return report
+
+
+def build_language_readiness(parsed_docs: list) -> dict:
+    """Build per-language QA readiness summary from missing + invalid checks."""
+    missing_report = generate_missing_content_report(parsed_docs)
+    invalid_report = generate_invalid_placeholder_report(parsed_docs)
+
+    by_language = {}
+    ready_count = 0
+    missing_count = 0
+    invalid_count = 0
+
+    for doc in parsed_docs:
+        lang = doc.language_code
+        has_missing = len(missing_report["by_language"].get(lang, [])) > 0
+        invalid_total = invalid_report["by_language"].get(lang, {}).get("count", 0)
+
+        if invalid_total > 0:
+            status = "invalid"
+            invalid_count += 1
+        elif has_missing:
+            status = "missing"
+            missing_count += 1
+        else:
+            status = "ready"
+            ready_count += 1
+
+        by_language[lang] = {
+            "status": status,
+            "missing_issues": missing_report["by_language"].get(lang, []),
+            "invalid_count": invalid_total,
+            "invalid_tokens": invalid_report["by_language"].get(lang, {}).get("tokens", []),
+        }
+
+    return {
+        "by_language": by_language,
+        "ready_count": ready_count,
+        "missing_count": missing_count,
+        "invalid_count": invalid_count,
+        "has_issues": (missing_count + invalid_count) > 0,
+    }
 
 
 def extract_xml_from_cms_export(zip_file) -> dict[str, str]:
@@ -1047,6 +1404,80 @@ def main():
             st.info("Upload a ZIP file first to see preview")
         else:
             parsed_docs = st.session_state["parsed_docs"]
+
+            # QA summary chips per language
+            readiness = build_language_readiness(parsed_docs)
+            st.markdown("### ✅ QA Summary")
+            st.markdown(
+                f"✅ **Ready:** {readiness['ready_count']}  |  "
+                f"⚠️ **Missing:** {readiness['missing_count']}  |  "
+                f"❌ **Invalid:** {readiness['invalid_count']}"
+            )
+
+            if readiness["has_issues"]:
+                issue_tokens = []
+                for doc in parsed_docs:
+                    lang = doc.language_code
+                    lang_name = LANGUAGE_NAMES.get(lang, lang)
+                    state = readiness["by_language"][lang]["status"]
+                    if state == "missing":
+                        issue_tokens.append(f"⚠️ {lang} missing")
+                    elif state == "invalid":
+                        issue_tokens.append(f"❌ {lang} invalid")
+
+                if issue_tokens:
+                    issue_buttons = []
+                    for doc in parsed_docs:
+                        lang = doc.language_code
+                        lang_name = LANGUAGE_NAMES.get(lang, lang)
+                        state = readiness["by_language"][lang]["status"]
+                        if state == "missing":
+                            issue_buttons.append((lang, f"⚠️ {lang} ({lang_name})"))
+                        elif state == "invalid":
+                            issue_buttons.append((lang, f"❌ {lang} ({lang_name})"))
+
+                    if issue_buttons:
+                        st.caption("Issues: " + " | ".join(issue_tokens))
+
+                        label_to_lang = {label: lang for lang, label in issue_buttons}
+                        select_col, open_col, spacer_col = st.columns([5, 1, 6])
+                        with select_col:
+                            selected_issue_label = st.selectbox(
+                                "Issue quick jump",
+                                list(label_to_lang.keys()),
+                                key="qa_issue_quick_select",
+                                label_visibility="collapsed",
+                            )
+                        with open_col:
+                            if st.button("Open", key="qa_issue_quick_open", use_container_width=True, type="secondary"):
+                                st.session_state["qa_target_lang"] = label_to_lang[selected_issue_label]
+                                st.rerun()
+                    else:
+                        st.caption("Issues: " + " | ".join(issue_tokens))
+            else:
+                st.caption("No QA issues detected.")
+
+            show_qa_details = st.toggle(
+                "Show QA details",
+                value=False,
+                help="Expanded details for each language status.",
+            )
+
+            if show_qa_details:
+                rows = []
+                for doc in parsed_docs:
+                    lang = doc.language_code
+                    lang_name = LANGUAGE_NAMES.get(lang, lang)
+                    state = readiness["by_language"][lang]["status"]
+                    status_label = "✅ Ready" if state == "ready" else ("⚠️ Missing" if state == "missing" else "❌ Invalid")
+                    rows.append({
+                        "Language": f"{lang} ({lang_name})",
+                        "Status": status_label,
+                        "Invalid placeholders": readiness["by_language"][lang]["invalid_count"],
+                        "Missing issues": len(readiness["by_language"][lang]["missing_issues"]),
+                    })
+
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=210)
             
             # Language selector with full names
             languages = [doc.language_code for doc in parsed_docs]
@@ -1056,10 +1487,20 @@ def main():
                 name = LANGUAGE_NAMES.get(code, code)
                 return f"{code} - {name}"
             
+            # Use qa_target_lang if set (from quick-action buttons), otherwise default to first
+            default_lang = st.session_state.get("qa_target_lang", languages[0] if languages else None)
+            if default_lang and default_lang in languages:
+                default_index = languages.index(default_lang)
+                if "qa_target_lang" in st.session_state:
+                    del st.session_state["qa_target_lang"]  # Clear it after use
+            else:
+                default_index = 0
+            
             selected_lang = st.selectbox(
                 "Select Language to Preview", 
                 languages,
-                format_func=format_language
+                format_func=format_language,
+                index=default_index,
             )
             
             selected_doc = next((d for d in parsed_docs if d.language_code == selected_lang), None)
@@ -1089,7 +1530,15 @@ def main():
                             
                             with st.expander(expander_label):
                                 sms_key = f"sms_{selected_lang}_{idx}_{sms_type}_{template.variant}"
-                                edited_body = st.text_area("Body", value=sms_body, height=100, key=sms_key)
+                                fix_buffer_key = f"fix_buffer_{sms_key}"
+                                # Sync fix buffer to widget state and clear buffer
+                                if fix_buffer_key in st.session_state:
+                                    st.session_state[sms_key] = st.session_state[fix_buffer_key]
+                                    del st.session_state[fix_buffer_key]
+                                # Ensure widget key exists in session state
+                                if sms_key not in st.session_state:
+                                    st.session_state[sms_key] = sms_body
+                                edited_body = st.text_area("Body", height=100, key=sms_key)
                                 
                                 _, color, char_msg = get_sms_char_info(edited_body)
                                 if color == "green":
@@ -1103,7 +1552,12 @@ def main():
                                 
                                 invalid = validate_placeholders(edited_body)
                                 if invalid:
-                                    st.error(f"❌ Invalid placeholders: {', '.join(['%%' + p + '%%' for p in invalid])}")
+                                    render_invalid_placeholder_assistant(
+                                        field_label="Body",
+                                        text=edited_body,
+                                        fix_buffer_key=fix_buffer_key,
+                                        button_key=f"fix_{sms_key}",
+                                    )
                                 
                                 for warn in check_missing_content("SMS", body=edited_body):
                                     st.warning(warn)
@@ -1143,13 +1597,93 @@ def main():
                                 body_key = f"oms_body_{selected_lang}_{idx}_{oms_type}_{template.variant}"
                                 cta_key = f"oms_cta_{selected_lang}_{idx}_{oms_type}_{template.variant}"
                                 
-                                edited_title = st.text_input("Title", value=oms_title, key=title_key)
-                                edited_body = st.text_area("Body (BBCode)", value=oms_body, height=150, key=body_key)
-                                edited_cta = st.text_input("CTA", value=oms_cta, key=cta_key)
+                                title_fix_buffer = f"fix_buffer_{title_key}"
+                                body_fix_buffer = f"fix_buffer_{body_key}"
+                                cta_fix_buffer = f"fix_buffer_{cta_key}"
+                                
+                                # Sync fix buffers to widget states and clear buffers
+                                if title_fix_buffer in st.session_state:
+                                    st.session_state[title_key] = st.session_state[title_fix_buffer]
+                                    del st.session_state[title_fix_buffer]
+                                if body_fix_buffer in st.session_state:
+                                    st.session_state[body_key] = st.session_state[body_fix_buffer]
+                                    del st.session_state[body_fix_buffer]
+                                if cta_fix_buffer in st.session_state:
+                                    st.session_state[cta_key] = st.session_state[cta_fix_buffer]
+                                    del st.session_state[cta_fix_buffer]
+                                
+                                # Ensure widget keys exist in session state
+                                if title_key not in st.session_state:
+                                    st.session_state[title_key] = oms_title
+                                if body_key not in st.session_state:
+                                    st.session_state[body_key] = oms_body
+                                if cta_key not in st.session_state:
+                                    st.session_state[cta_key] = oms_cta
+                                
+                                edited_title = st.text_input("Title", key=title_key)
+                                edited_body = st.text_area("Body (BBCode)", height=150, key=body_key)
+                                edited_cta = st.text_input("CTA", key=cta_key)
+
+                                title_invalid = validate_placeholders(edited_title)
+                                if title_invalid:
+                                    render_invalid_placeholder_assistant(
+                                        field_label="Title",
+                                        text=edited_title,
+                                        fix_buffer_key=title_fix_buffer,
+                                        button_key=f"fix_{title_key}",
+                                    )
+
+                                body_invalid = validate_placeholders(edited_body)
+                                if body_invalid:
+                                    render_invalid_placeholder_assistant(
+                                        field_label="Body",
+                                        text=edited_body,
+                                        fix_buffer_key=body_fix_buffer,
+                                        button_key=f"fix_{body_key}",
+                                    )
+
+                                cta_invalid = validate_placeholders(edited_cta)
+                                if cta_invalid:
+                                    render_invalid_placeholder_assistant(
+                                        field_label="CTA",
+                                        text=edited_cta,
+                                        fix_buffer_key=cta_fix_buffer,
+                                        button_key=f"fix_{cta_key}",
+                                    )
+
+                                all_edited = edited_title + " " + edited_body + " " + edited_cta
+                                placeholder_stats = analyze_placeholders(all_edited)
+
+                                health_col, toggle_col = st.columns([3, 2])
+                                with health_col:
+                                    st.caption(
+                                        f"Placeholder Health: "
+                                        f"Total {placeholder_stats['total']} | "
+                                        f"Valid {placeholder_stats['valid']} | "
+                                        f"Invalid {placeholder_stats['invalid']}"
+                                    )
+
+                                raw_mode_key = f"oms_raw_mode_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+                                with toggle_col:
+                                    show_raw_placeholders = st.toggle(
+                                        "Show raw placeholders",
+                                        value=False,
+                                        key=raw_mode_key,
+                                        help="When enabled, valid placeholders are shown as raw %%placeholder%% tokens. When disabled, valid placeholders render as realistic sample values.",
+                                    )
+
+                                if placeholder_stats["invalid"] > 0:
+                                    with st.expander("Placeholder details", expanded=False):
+                                        if placeholder_stats["invalid"] > 0:
+                                            invalid_labels = [f"%%{token}%%" for token in placeholder_stats["invalid_tokens"]]
+                                            st.caption("Invalid placeholders: " + ", ".join(invalid_labels))
                                 
                                 if edited_body:
                                     st.markdown("**Desktop OMS Preview:**")
-                                    st.caption("Legend: Amber = available placeholder, Red = not available in Campaign Wizard")
+                                    if show_raw_placeholders:
+                                        st.caption("Legend: Amber = available placeholder, Red = not available in Campaign Wizard")
+                                    else:
+                                        st.caption("Realistic mode: Green = sample value for valid placeholder, Red = invalid placeholder")
                                     image_data_uri = ""
                                     if selected_image_file:
                                         image_path = Path(__file__).parent / "images" / selected_image_file
@@ -1160,13 +1694,11 @@ def main():
                                         body=edited_body,
                                         cta=edited_cta,
                                         image_data_uri=image_data_uri,
+                                        placeholder_mode="raw" if show_raw_placeholders else "realistic",
                                     )
                                     components.html(oms_card_html, height=430, scrolling=True)
-                                
-                                all_edited = edited_title + " " + edited_body + " " + edited_cta
+
                                 invalid = validate_placeholders(all_edited)
-                                if invalid:
-                                    st.error(f"❌ Invalid placeholders: {', '.join(['%%' + p + '%%' for p in invalid])}")
                                 
                                 for warn in check_missing_content("OMS", title=edited_title, body=edited_body, cta=edited_cta):
                                     st.warning(warn)
@@ -1179,12 +1711,37 @@ def main():
                     tc_sig = selected_doc.tc.significant_terms or ""
                     tc_full = selected_doc.tc.terms_and_conditions or ""
                     
-                    all_tc_text = tc_sig + " " + tc_full
+                    # Pre-initialize widget keys so we can check edited values
+                    sig_key = f"tc_sig_{selected_lang}"
+                    full_key = f"tc_full_{selected_lang}"
+                    sig_fix_buffer = f"fix_buffer_{sig_key}"
+                    full_fix_buffer = f"fix_buffer_{full_key}"
+                    
+                    # Sync fix buffers to widget states and clear buffers
+                    if sig_fix_buffer in st.session_state:
+                        st.session_state[sig_key] = st.session_state[sig_fix_buffer]
+                        del st.session_state[sig_fix_buffer]
+                    if full_fix_buffer in st.session_state:
+                        st.session_state[full_key] = st.session_state[full_fix_buffer]
+                        del st.session_state[full_fix_buffer]
+                    
+                    # Ensure widget keys exist in session state
+                    if sig_key not in st.session_state:
+                        st.session_state[sig_key] = tc_sig
+                    if full_key not in st.session_state:
+                        st.session_state[full_key] = tc_full
+                    
+                    # Get EDITED values from session state (not original template)
+                    edited_tc_sig = st.session_state.get(sig_key, tc_sig)
+                    edited_tc_full = st.session_state.get(full_key, tc_full)
+                    
+                    # Check issues based on EDITED values
+                    all_tc_text = edited_tc_sig + " " + edited_tc_full
                     invalid_tc = validate_placeholders(all_tc_text)
                     tc_missing = []
-                    if not tc_sig.strip():
+                    if not edited_tc_sig.strip():
                         tc_missing.append("Significant Terms empty")
-                    if not tc_full.strip():
+                    if not edited_tc_full.strip():
                         tc_missing.append("Full T&Cs empty")
                     
                     if invalid_tc or tc_missing:
@@ -1192,18 +1749,34 @@ def main():
                     
                     tc_col1, tc_col2 = st.columns(2)
                     with tc_col1:
-                        edited_sig = st.text_area("Significant Terms", value=tc_sig, height=200, key=f"tc_sig_{selected_lang}")
+                        # Ensure widget key exists in session state
+                        if sig_key not in st.session_state:
+                            st.session_state[sig_key] = tc_sig
+                        edited_sig = st.text_area("Significant Terms", height=200, key=sig_key)
                         sig_invalid = validate_placeholders(edited_sig)
                         if sig_invalid:
-                            st.error(f"❌ Invalid: {', '.join(['%%' + p + '%%' for p in sig_invalid])}")
+                            render_invalid_placeholder_assistant(
+                                field_label="Significant Terms",
+                                text=edited_sig,
+                                fix_buffer_key=sig_fix_buffer,
+                                button_key=f"fix_{sig_key}",
+                            )
                         if not edited_sig.strip():
                             st.warning("⚠️ Significant Terms is empty")
                             
                     with tc_col2:
-                        edited_full = st.text_area("Full Terms & Conditions", value=tc_full, height=200, key=f"tc_full_{selected_lang}")
+                        # Ensure widget key exists in session state
+                        if full_key not in st.session_state:
+                            st.session_state[full_key] = tc_full
+                        edited_full = st.text_area("Full Terms & Conditions", height=200, key=full_key)
                         full_invalid = validate_placeholders(edited_full)
                         if full_invalid:
-                            st.error(f"❌ Invalid: {', '.join(['%%' + p + '%%' for p in full_invalid])}")
+                            render_invalid_placeholder_assistant(
+                                field_label="Full T&Cs",
+                                text=edited_full,
+                                fix_buffer_key=full_fix_buffer,
+                                button_key=f"fix_{full_key}",
+                            )
                         if not edited_full.strip():
                             st.warning("⚠️ Full T&Cs is empty")
                 else:
@@ -1280,6 +1853,23 @@ def main():
             if warnings:
                 for w in warnings:
                     st.warning(f"⚠️ {w}")
+
+            # Optional QA gate (soft block with explicit override)
+            readiness = build_language_readiness(parsed_docs)
+            if readiness["has_issues"]:
+                st.warning(
+                    f"QA issues detected: {readiness['missing_count']} language(s) with missing content, "
+                    f"{readiness['invalid_count']} language(s) with invalid placeholders."
+                )
+                allow_with_issues = st.checkbox(
+                    "Allow generation with QA issues",
+                    value=False,
+                    help="Enable only if you intentionally want to generate packages despite QA issues.",
+                )
+                if not allow_with_issues:
+                    can_generate = False
+            else:
+                st.success("✅ QA check passed: all languages are ready.")
             
             st.divider()
             

@@ -2204,8 +2204,8 @@ st.markdown("""
 
     .console-strip {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 14px;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 12px;
         margin: 0 0 20px 0;
     }
 

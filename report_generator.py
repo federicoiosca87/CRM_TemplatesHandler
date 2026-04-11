@@ -172,9 +172,11 @@ class AuditReport:
             f"**Completion Time:** {self.end_timestamp.strftime('%Y-%m-%d %H:%M:%S')}",
             f"**Duration:** {int(self.duration_seconds // 60)}m {int(self.duration_seconds % 60)}s",
             f"**Offer Type:** {self.offer_type}",
-            f"**Template Version:** {self.template_version}",
             f"**Markets Included:** {', '.join(self.markets) if self.markets else 'N/A'}",
         ]
+
+        if self.template_version:
+            lines.insert(-1, f"**Template Version:** {self.template_version}")
         
         if self.user_notes:
             lines.extend([

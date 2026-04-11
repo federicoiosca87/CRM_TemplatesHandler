@@ -11,6 +11,7 @@ import base64
 import mimetypes
 import textwrap
 import copy
+import html
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
@@ -274,6 +275,8 @@ def track_fix_applied(language_code: str, field_label: str, replacements: dict[s
         st.session_state["qa_fixes_applied"] = {}
     if "qa_fix_details" not in st.session_state:
         st.session_state["qa_fix_details"] = {}
+    if "qa_fix_events" not in st.session_state:
+        st.session_state["qa_fix_events"] = []
 
     per_language = st.session_state["qa_fixes_applied"].setdefault(language_code, {})
     per_language[field_label] = per_language.get(field_label, 0) + replacements_count
@@ -284,6 +287,15 @@ def track_fix_applied(language_code: str, field_label: str, replacements: dict[s
         pair = f"%%{wrong_token}%%→%%{right_token}%%"
         if pair not in detail_list:
             detail_list.append(pair)
+
+    st.session_state["qa_fix_events"].append(
+        {
+            "language": language_code,
+            "field": field_label,
+            "replacements": [f"%%{w}%%→%%{r}%%" for w, r in replacements.items()],
+            "count": replacements_count,
+        }
+    )
 
 
 def track_content_edit_event(language_code: str, field_label: str, before_text: str, after_text: str, source: str) -> None:
@@ -1584,30 +1596,305 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    :root {
+        --rc-bg: #0e1218;
+        --rc-panel: #141b24;
+        --rc-panel-soft: #101720;
+        --rc-border: #263243;
+        --rc-text: #e9eef5;
+        --rc-muted: #92a2b6;
+        --rc-green: #64d596;
+        --rc-green-bg: rgba(100, 213, 150, 0.12);
+        --rc-amber: #f4c96b;
+        --rc-amber-bg: rgba(244, 201, 107, 0.14);
+        --rc-red: #ef8b86;
+        --rc-red-bg: rgba(239, 139, 134, 0.14);
+        --rc-blue: #7db7ff;
+        --rc-blue-bg: rgba(125, 183, 255, 0.12);
+    }
+
+    .stApp {
+        background:
+            radial-gradient(circle at top right, rgba(68, 92, 132, 0.18), transparent 28%),
+            linear-gradient(180deg, #0c1117 0%, #0b1016 100%);
+    }
+
     .stAlert > div {
         padding: 0.5rem 1rem;
     }
-    .success-box {
-        background-color: #d4edda;
-        border: 1px solid #c3e6cb;
-        border-radius: 4px;
-        padding: 1rem;
-        margin: 1rem 0;
+
+    .review-hero {
+        background: linear-gradient(135deg, rgba(22, 31, 42, 0.96), rgba(15, 22, 31, 0.96));
+        border: 1px solid var(--rc-border);
+        border-radius: 18px;
+        padding: 20px 22px;
+        margin: 0 0 16px 0;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
     }
-    .warning-box {
-        background-color: #fff3cd;
-        border: 1px solid #ffeeba;
-        border-radius: 4px;
-        padding: 1rem;
-        margin: 1rem 0;
+
+    .review-hero h1 {
+        margin: 0;
+        font-size: 2rem;
+        color: var(--rc-text);
+        letter-spacing: -0.03em;
+    }
+
+    .review-hero p {
+        margin: 6px 0 16px 0;
+        color: var(--rc-muted);
+        font-size: 0.98rem;
+    }
+
+    .hero-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .hero-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid var(--rc-border);
+        border-radius: 999px;
+        padding: 6px 11px;
+        color: var(--rc-text);
+        font-size: 0.9rem;
+    }
+
+    .hero-pill .label {
+        color: var(--rc-muted);
+    }
+
+    .console-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin: 0 0 12px 0;
+    }
+
+    .console-metric {
+        background: var(--rc-panel);
+        border: 1px solid var(--rc-border);
+        border-radius: 14px;
+        padding: 12px 14px;
+    }
+
+    .console-metric .label {
+        color: var(--rc-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.72rem;
+        margin-bottom: 6px;
+    }
+
+    .console-metric .value {
+        color: var(--rc-text);
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1.1;
+    }
+
+    .console-metric .sub {
+        color: var(--rc-muted);
+        font-size: 0.84rem;
+        margin-top: 4px;
+    }
+
+    .metric-ready { border-color: rgba(100, 213, 150, 0.26); background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)); }
+    .metric-missing { border-color: rgba(244, 201, 107, 0.26); background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)); }
+    .metric-invalid { border-color: rgba(239, 139, 134, 0.26); background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)); }
+    .metric-session { border-color: rgba(125, 183, 255, 0.24); background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)); }
+
+    .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0 0 14px 0;
+    }
+
+    .issue-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        padding: 7px 11px;
+        font-size: 0.88rem;
+        border: 1px solid var(--rc-border);
+        color: var(--rc-text);
+        background: var(--rc-panel-soft);
+    }
+
+    .issue-chip.warning {
+        border-color: rgba(244, 201, 107, 0.32);
+        background: var(--rc-amber-bg);
+    }
+
+    .issue-chip.error {
+        border-color: rgba(239, 139, 134, 0.32);
+        background: var(--rc-red-bg);
+    }
+
+    .console-panel {
+        background: linear-gradient(180deg, rgba(20, 27, 36, 0.98), rgba(14, 19, 26, 0.98));
+        border: 1px solid var(--rc-border);
+        border-radius: 16px;
+        padding: 16px 18px;
+        margin-bottom: 14px;
+    }
+
+    .console-panel-title {
+        margin: 0 0 4px 0;
+        color: var(--rc-text);
+        font-size: 1rem;
+        font-weight: 700;
+    }
+
+    .console-panel-subtitle {
+        margin: 0;
+        color: var(--rc-muted);
+        font-size: 0.88rem;
+    }
+
+    .panel-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin: 0 0 14px 0;
+    }
+
+    .mini-panel {
+        background: var(--rc-panel);
+        border: 1px solid var(--rc-border);
+        border-radius: 14px;
+        padding: 14px 15px;
+        min-height: 120px;
+    }
+
+    .mini-panel h4 {
+        margin: 0 0 8px 0;
+        color: var(--rc-text);
+        font-size: 0.98rem;
+    }
+
+    .mini-panel p,
+    .mini-panel ul {
+        margin: 0;
+        color: var(--rc-muted);
+        font-size: 0.88rem;
+        line-height: 1.55;
+    }
+
+    .mini-panel ul {
+        padding-left: 18px;
+    }
+
+    .section-kicker {
+        color: var(--rc-blue);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 0.72rem;
+        margin-bottom: 4px;
+    }
+
+    @media (max-width: 900px) {
+        .console-strip, .panel-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
 
 
+def render_review_console_hero() -> None:
+    """Render a compact session hero for the app shell."""
+    document_name = st.session_state.get("document_name", "No document loaded")
+    offer_key = st.session_state.get("offer_key", "Awaiting configuration")
+    language_count = len(st.session_state.get("parsed_docs", []))
+    variants = st.session_state.get("variants", [])
+    variant_label = ", ".join(variants[:4]) if variants else "None"
+    if len(variants) > 4:
+        variant_label += f" (+{len(variants) - 4})"
+
+    st.markdown(
+        (
+            "<section class='review-hero'>"
+            "<h1>CMS Template Generator</h1>"
+            "<p>Review console for localized campaign content, QA resolution, and export auditing.</p>"
+            "<div class='hero-meta'>"
+            f"<span class='hero-pill'><span class='label'>Document</span><strong>{html.escape(document_name)}</strong></span>"
+            f"<span class='hero-pill'><span class='label'>Offer</span><strong>{html.escape(offer_key)}</strong></span>"
+            f"<span class='hero-pill'><span class='label'>Languages</span><strong>{language_count}</strong></span>"
+            f"<span class='hero-pill'><span class='label'>Variants</span><strong>{html.escape(variant_label)}</strong></span>"
+            "</div>"
+            "</section>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
+    """Render review-console QA strip."""
+    resolved_count = len(resolved_events)
+    resolved_text = " | ".join(resolved_events[-2:]) if resolved_events else "No resolutions yet"
+    st.markdown(
+        (
+            "<div class='console-strip'>"
+            f"<div class='console-metric metric-ready'><div class='label'>Ready</div><div class='value'>{readiness['ready_count']}</div><div class='sub'>Languages cleared for export</div></div>"
+            f"<div class='console-metric metric-missing'><div class='label'>Missing</div><div class='value'>{readiness['missing_count']}</div><div class='sub'>Incomplete content blocks</div></div>"
+            f"<div class='console-metric metric-invalid'><div class='label'>Invalid</div><div class='value'>{readiness['invalid_count']}</div><div class='sub'>Placeholder issues still open</div></div>"
+            f"<div class='console-metric metric-session'><div class='label'>Resolved</div><div class='value'>{resolved_count}</div><div class='sub'>{html.escape(resolved_text)}</div></div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> None:
+    """Render clickable issue chips for direct language navigation."""
+    issue_buttons: list[tuple[str, str]] = []
+    for doc in parsed_docs:
+        lang = doc.language_code
+        lang_name = LANGUAGE_NAMES.get(lang, lang)
+        state = readiness["by_language"][lang]["status"]
+        if state == "missing":
+            issue_buttons.append((lang, f"⚠ {lang} {lang_name}"))
+        elif state == "invalid":
+            issue_buttons.append((lang, f"✖ {lang} {lang_name}"))
+
+    if not issue_buttons:
+        st.markdown("<div class='chip-row'><span class='issue-chip'>✓ No open QA issues</span></div>", unsafe_allow_html=True)
+        return
+
+    st.markdown("<div class='chip-row'>", unsafe_allow_html=True)
+    col_count = min(4, len(issue_buttons))
+    cols = st.columns(col_count)
+    for idx, (lang, label) in enumerate(issue_buttons):
+        col = cols[idx % col_count]
+        with col:
+            if st.button(label, key=f"qa_chip_{lang}_{idx}", width="stretch", type="secondary"):
+                st.session_state["qa_target_lang"] = lang
+                st.session_state["qa_language_select"] = lang
+                st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_console_section_header(kicker: str, title: str, subtitle: str) -> None:
+    st.markdown(
+        (
+            "<div class='console-panel'>"
+            f"<div class='section-kicker'>{html.escape(kicker)}</div>"
+            f"<div class='console-panel-title'>{html.escape(title)}</div>"
+            f"<p class='console-panel-subtitle'>{html.escape(subtitle)}</p>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def main():
-    st.title("📝 CMS Template Generator")
-    st.markdown("Convert localized Word documents into CMS-ready template packages (SMS, OMS, TC)")
+    render_review_console_hero()
     
     # Sidebar for configuration
     with st.sidebar:
@@ -1881,6 +2168,8 @@ def main():
                         st.session_state["qa_fix_details"] = {}
                     if is_new_upload or "qa_content_edit_events" not in st.session_state:
                         st.session_state["qa_content_edit_events"] = []
+                        if is_new_upload or "qa_fix_events" not in st.session_state:
+                            st.session_state["qa_fix_events"] = []
                         if is_new_upload or "editor_values" not in st.session_state:
                             st.session_state["editor_values"] = {}
                     st.session_state["upload_file_key"] = current_upload_key
@@ -2000,7 +2289,11 @@ def main():
                     
     
     with tab2:
-        st.header("Step 2: Preview Extracted Content")
+        render_console_section_header(
+            "QA Review",
+            "Preview Extracted Content",
+            "Review content by language, resolve placeholder issues, and prepare the package for export.",
+        )
         
         if "parsed_docs" not in st.session_state:
             st.info("Upload a ZIP file first to see preview")
@@ -2008,14 +2301,7 @@ def main():
             parsed_docs = st.session_state["parsed_docs"]
             effective_docs = build_effective_parsed_docs(parsed_docs)
 
-            # QA summary chips per language
             readiness = build_language_readiness(effective_docs)
-            st.markdown("### ✅ QA Summary")
-            st.markdown(
-                f"✅ **Ready:** {readiness['ready_count']}  |  "
-                f"⚠️ **Missing:** {readiness['missing_count']}  |  "
-                f"❌ **Invalid:** {readiness['invalid_count']}"
-            )
 
             status_by_lang = {
                 doc.language_code: readiness["by_language"][doc.language_code]["status"]
@@ -2032,54 +2318,15 @@ def main():
             st.session_state["qa_prev_status_by_lang"] = status_by_lang
 
             resolved_events = st.session_state.get("qa_resolved_events", [])
-            if resolved_events:
-                st.caption("Resolved this session: " + " | ".join(resolved_events[-3:]))
+            render_console_metrics(readiness, resolved_events)
 
             issue_langs = [lang for lang, status in status_by_lang.items() if status != "ready"]
+            render_issue_chips(readiness, parsed_docs)
 
             if readiness["has_issues"]:
-                issue_tokens = []
-                for doc in parsed_docs:
-                    lang = doc.language_code
-                    lang_name = LANGUAGE_NAMES.get(lang, lang)
-                    state = readiness["by_language"][lang]["status"]
-                    if state == "missing":
-                        issue_tokens.append(f"⚠️ {lang} missing")
-                    elif state == "invalid":
-                        issue_tokens.append(f"❌ {lang} invalid")
-
-                if issue_tokens:
-                    issue_buttons = []
-                    for doc in parsed_docs:
-                        lang = doc.language_code
-                        lang_name = LANGUAGE_NAMES.get(lang, lang)
-                        state = readiness["by_language"][lang]["status"]
-                        if state == "missing":
-                            issue_buttons.append((lang, f"⚠️ {lang} ({lang_name})"))
-                        elif state == "invalid":
-                            issue_buttons.append((lang, f"❌ {lang} ({lang_name})"))
-
-                    if issue_buttons:
-                        st.caption("Issues: " + " | ".join(issue_tokens))
-
-                        label_to_lang = {label: lang for lang, label in issue_buttons}
-                        with st.popover("Actions"):
-                            selected_issue_label = st.selectbox(
-                                "Issue quick jump",
-                                list(label_to_lang.keys()),
-                                key="qa_issue_quick_select",
-                                label_visibility="collapsed",
-                            )
-                            if st.button("Open selected", key="qa_issue_quick_open", width="stretch", type="secondary"):
-                                st.session_state["qa_target_lang"] = label_to_lang[selected_issue_label]
-                                st.rerun()
-                            if st.button("Open first issue", key="qa_issue_open_first", width="stretch"):
-                                st.session_state["qa_target_lang"] = issue_buttons[0][0]
-                                st.rerun()
-                    else:
-                        st.caption("Issues: " + " | ".join(issue_tokens))
+                st.caption("Click an issue chip to jump directly to that language.")
             else:
-                st.caption("No QA issues detected.")
+                st.caption("All languages are currently clear for export.")
 
             show_qa_details = st.toggle(
                 "Show QA details",
@@ -2111,34 +2358,27 @@ def main():
                 name = LANGUAGE_NAMES.get(code, code)
                 return f"{code} - {name}"
             
+            if "qa_language_select" not in st.session_state or st.session_state.get("qa_language_select") not in languages:
+                st.session_state["qa_language_select"] = issue_langs[0] if issue_langs else (languages[0] if languages else None)
+
             default_lang = st.session_state.get("qa_target_lang")
+            if default_lang and default_lang in languages:
+                st.session_state["qa_language_select"] = default_lang
+                del st.session_state["qa_target_lang"]
 
             if st.session_state.get("qa_advance_after_fix"):
-                current_lang = st.session_state.get("qa_last_selected_lang", "")
+                current_lang = st.session_state.get("qa_language_select", st.session_state.get("qa_last_selected_lang", ""))
                 if current_lang in issue_langs:
-                    default_lang = current_lang
+                    st.session_state["qa_language_select"] = current_lang
                 else:
-                    default_lang = choose_next_issue_language(current_lang, issue_langs) or current_lang
+                    st.session_state["qa_language_select"] = choose_next_issue_language(current_lang, issue_langs) or current_lang
                 st.session_state["qa_advance_after_fix"] = False
 
-            if not default_lang:
-                if issue_langs:
-                    default_lang = issue_langs[0]
-                else:
-                    default_lang = languages[0] if languages else None
-
-            if default_lang and default_lang in languages:
-                default_index = languages.index(default_lang)
-                if "qa_target_lang" in st.session_state:
-                    del st.session_state["qa_target_lang"]  # Clear it after use
-            else:
-                default_index = 0
-            
             selected_lang = st.selectbox(
-                "Select Language to Preview", 
+                "Select Language to Preview",
                 languages,
                 format_func=format_language,
-                index=default_index,
+                key="qa_language_select",
             )
 
             previous_selected_lang = st.session_state.get("qa_last_selected_lang")
@@ -2448,7 +2688,11 @@ def main():
                     st.warning("No T&Cs found")
     
     with tab3:
-        st.header("Step 3: Generate CMS Packages")
+        render_console_section_header(
+            "Release Gate",
+            "Generate CMS Packages",
+            "Validate export readiness, capture audit context, and produce final CMS packages.",
+        )
         
         if "parsed_docs" not in st.session_state:
             st.info("Upload and parse documents first")
@@ -2456,108 +2700,66 @@ def main():
             parsed_docs = st.session_state.get("parsed_docs", [])
             effective_docs = build_effective_parsed_docs(parsed_docs)
             
-            # Show configuration summary
-            st.subheader("📋 Configuration Summary")
-            
-            config_col1, config_col2, config_col3 = st.columns(3)
-            
-            with config_col1:
-                st.markdown("**Offer Details**")
-                st.write("Offer Key:", st.session_state.get("offer_key", "Not set"))
-                st.write("Task Type:", st.session_state.get("task_type", "Not set"))
-                st.write("Reward Type:", st.session_state.get("reward_type", "Not set"))
-            
-            with config_col2:
-                st.markdown("**Templates**")
-                st.write("Send Conditions:", ", ".join(st.session_state.get("send_conditions", [])))
-                st.write("Detected Variants:", ", ".join(st.session_state.get("variants", [])))
-            
-            with config_col3:
-                st.markdown("**Content**")
-                st.write("Languages:", len(st.session_state.get("parsed_docs", [])))
+            send_conditions_label = ", ".join(st.session_state.get("send_conditions", [])) or "None"
+            variants_label = ", ".join(st.session_state.get("variants", [])) or "None"
+            st.markdown(
+                (
+                    "<div class='panel-grid'>"
+                    "<div class='mini-panel'>"
+                    "<h4>Offer Details</h4>"
+                    f"<p><strong>Offer Key</strong><br>{html.escape(str(st.session_state.get('offer_key', 'Not set')))}</p>"
+                    f"<p style='margin-top:8px;'><strong>Task / Reward</strong><br>{html.escape(str(st.session_state.get('task_type', 'Not set')))} / {html.escape(str(st.session_state.get('reward_type', 'Not set')))}</p>"
+                    "</div>"
+                    "<div class='mini-panel'>"
+                    "<h4>Template Payload</h4>"
+                    f"<p><strong>Send Conditions</strong><br>{html.escape(send_conditions_label)}</p>"
+                    f"<p style='margin-top:8px;'><strong>Variants</strong><br>{html.escape(variants_label)}</p>"
+                    "</div>"
+                    "<div class='mini-panel'>"
+                    "<h4>Content Scope</h4>"
+                    f"<p><strong>Languages</strong><br>{len(st.session_state.get('parsed_docs', []))}</p>"
+                    f"<p style='margin-top:8px;'><strong>Markets</strong><br>{html.escape(', '.join(st.session_state.get('audit_markets', [])) or 'Auto-detect pending')}</p>"
+                    "</div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
             
             st.divider()
             
-            # Package preview
-            st.subheader("📦 Packages to Generate")
-            pkg_col1, pkg_col2, pkg_col3 = st.columns(3)
-            
-            with pkg_col1:
-                st.markdown("**1. SMS Package**")
-                st.caption("CampaignWizardSmsTemplate")
-                st.write("• Template body text")
-                st.write("• Per-language XML files")
-            
-            with pkg_col2:
-                st.markdown("**2. OMS Package**")
-                st.caption("CampaignWizardOmsTemplate")
-                st.write("• Title, body, CTA")
-                st.write("• Includes ClaimedReward communications by default")
-                st.write("• Per-language XML files")
-            
-            with pkg_col3:
-                st.markdown("**3. TC Package**")
-                st.caption("CampaignWizardTCTemplate")
-                st.write("• Significant terms")
-                st.write("• Full T&Cs")
+            st.markdown(
+                (
+                    "<div class='panel-grid'>"
+                    "<div class='mini-panel'><h4>SMS Package</h4><ul><li>CampaignWizardSmsTemplate</li><li>Template body content</li><li>Per-language XML files</li></ul></div>"
+                    "<div class='mini-panel'><h4>OMS Package</h4><ul><li>CampaignWizardOmsTemplate</li><li>Title, body, CTA</li><li>ClaimedReward included by default</li></ul></div>"
+                    "<div class='mini-panel'><h4>T&C Package</h4><ul><li>CampaignWizardTCTemplate</li><li>Significant terms</li><li>Full terms & conditions</li></ul></div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
             
             st.divider()
             
             # Audit Report Metadata
-            st.subheader("📊 Audit Report Metadata (Optional)")
-            st.caption("Offer type and markets are auto-detected. Add notes and template version if needed.")
+            st.subheader("📊 Audit Report Context")
+            st.caption("Offer type and markets are auto-detected. Report notes are managed in Offer Configuration.")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                audit_offer_type = st.session_state.get("offer_key", "Not set")
-                st.markdown(f"**Offer Type:** `{audit_offer_type}`")
-                st.session_state["audit_offer_type"] = audit_offer_type
-            
-            with col2:
-                audit_template_version = st.text_input(
-                    "Template Version",
-                    value=st.session_state.get("audit_template_version", "1.0"),
-                    placeholder="e.g., 1.0, 2.1, 2026-Q1",
-                    key="audit_template_version_input",
-                )
-                st.session_state["audit_template_version"] = audit_template_version
+            audit_offer_type = st.session_state.get("offer_key", "Not set")
+            st.markdown(f"**Offer Type:** `{audit_offer_type}`")
+            st.session_state["audit_offer_type"] = audit_offer_type
             
             # Auto-detect markets from uploaded languages
             detected_markets = detect_markets_from_languages(parsed_docs)
             st.session_state["audit_markets"] = detected_markets
             
             st.markdown(f"**Markets Included:** {', '.join(detected_markets) if detected_markets else 'None detected'}")
-            st.caption("Auto-detected from uploaded document languages. Edit below if needed.")
-            
-            # Allow override if user wants
-            override_markets = st.checkbox(
-                "Override auto-detected markets",
-                value=False,
-                help="Enable this to manually select different markets",
-                key="override_markets",
-            )
-            
-            if override_markets:
-                all_markets = [
-                    "Realm", "Greece", "Italy", "Alta", "Peru", "Argentina",
-                    "Brazil", "Chile", "Colombia", "Mexico", "Sweden", "Norway",
-                    "Finland", "Estonia", "Latvia", "Turkey", "Poland", "Canada",
-                ]
-                audit_markets = st.multiselect(
-                    "Markets (Override)",
-                    options=all_markets,
-                    default=detected_markets,
-                    help="Select all markets this campaign will be deployed to",
-                    key="audit_markets_override",
-                )
-                st.session_state["audit_markets"] = audit_markets
-            
+
             audit_notes = st.text_area(
-                "Session Notes",
+                "Report Notes",
                 value=st.session_state.get("audit_notes", ""),
-                height=80,
-                placeholder="Optional: Document any special conditions, testing notes, or issues encountered during creation.",
-                key="audit_notes_input",
+                height=100,
+                placeholder="Optional: Context for this export, approvals, caveats, or rollout notes.",
+                key="audit_notes_context",
             )
             st.session_state["audit_notes"] = audit_notes
             
@@ -2655,17 +2857,36 @@ def main():
                             st.session_state.get("qa_fix_details", {}),
                         )
                         
+                        fixes_applied_report = st.session_state.get("qa_fixes_applied", {})
+                        fix_details_report = st.session_state.get("qa_fix_details", {})
+                        if not fixes_applied_report and st.session_state.get("qa_fix_events"):
+                            fixes_applied_report = {}
+                            fix_details_report = {}
+                            for event in st.session_state.get("qa_fix_events", []):
+                                lang = event.get("language", "")
+                                field = event.get("field", "")
+                                if not lang or not field:
+                                    continue
+                                count = int(event.get("count", 0) or 0)
+                                fixes_applied_report.setdefault(lang, {})
+                                fixes_applied_report[lang][field] = fixes_applied_report[lang].get(field, 0) + count
+                                fix_details_report.setdefault(lang, {})
+                                details = fix_details_report[lang].setdefault(field, [])
+                                for pair in event.get("replacements", []):
+                                    if pair not in details:
+                                        details.append(pair)
+
                         audit_report = build_report_from_session(
                             document_name=st.session_state.get("document_name", "Unknown"),
                             upload_timestamp=st.session_state.get("upload_timestamp", datetime.now()),
                             parsed_docs=parsed_docs,
                             generated_paths=generated_paths,
                             qa_issues=qa_issues_for_report,
-                            fixes_applied=st.session_state.get("qa_fixes_applied", {}),
-                            fix_details=st.session_state.get("qa_fix_details", {}),
+                            fixes_applied=fixes_applied_report,
+                            fix_details=fix_details_report,
                             language_names=LANGUAGE_NAMES,
                             offer_type=st.session_state.get("audit_offer_type", st.session_state.get("offer_key", "Unknown")),
-                            template_version=st.session_state.get("audit_template_version", "1.0"),
+                            template_version="",
                             markets=st.session_state.get("audit_markets", []),
                             user_notes=st.session_state.get("audit_notes", ""),
                             content_edits=filtered_content_edits,

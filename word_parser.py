@@ -109,7 +109,8 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
     doc = Document(file_path)
     language_code, offer_name = extract_language_and_offer(file_path.name)
     
-    # Extract all paragraphs with their text, preserving bullet list formatting
+    # Extract all paragraphs with their text, preserving bullet list formatting.
+    # Also include table-cell text because many templates are authored in tables.
     paragraphs = []
     for para in doc.paragraphs:
         text = para.text.strip()
@@ -126,6 +127,39 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
                 text = "• " + text
             
             paragraphs.append(text)
+
+    # Capture text authored inside tables (cells are not included in doc.paragraphs).
+    # Use error handling in case of malformed tables.
+    try:
+        for table in doc.tables:
+            try:
+                for row in table.rows:
+                    for cell in row.cells:
+                        try:
+                            for para in cell.paragraphs:
+                                text = para.text.strip()
+                                if not text:
+                                    continue
+
+                                is_list_item = False
+                                if para._p.pPr is not None and para._p.pPr.numPr is not None:
+                                    is_list_item = True
+                                elif para.style and "list" in para.style.name.lower():
+                                    is_list_item = True
+
+                                if is_list_item:
+                                    text = "• " + text
+
+                                paragraphs.append(text)
+                        except Exception:
+                            # Skip cells that can't be read; continue with next cell
+                            continue
+            except Exception:
+                # Skip tables with structural issues; continue with next table
+                continue
+    except Exception:
+        # If table extraction fails completely, proceed with paragraph text only
+        pass
     
     parsed = ParsedDocument(
         language_code=language_code,

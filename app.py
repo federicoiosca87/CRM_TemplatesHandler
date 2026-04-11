@@ -114,6 +114,38 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
     if langdetect_detect is None:
         return {doc.language_code: {"detected_language": None, "mismatch": False} for doc in parsed_docs}
 
+    def normalize_expected_lang(code: str) -> str:
+        """Normalize language/market/CMS codes to base langdetect-compatible language codes."""
+        code = (code or "").lower().strip()
+        if not code:
+            return code
+
+        # Handle cms variants like es-ar-ba, ru-ee, en-pe
+        if "-" in code:
+            return code.split("-", 1)[0]
+
+        # Market codes that represent Spanish/Portuguese content
+        if code in {"arg", "cl", "co", "mx", "pe", "py"}:
+            return "es"
+        if code == "br":
+            return "pt"
+
+        # Workspace-specific aliases
+        aliases = {
+            "gr": "el",  # Greek
+            "no": "no",  # Norwegian
+        }
+        return aliases.get(code, code)
+
+    def expand_tolerated_langs(expected_langs: set[str]) -> set[str]:
+        """Allow close language families that langdetect commonly confuses."""
+        tolerated = set(expected_langs)
+        if "is" in expected_langs:
+            tolerated.update({"no", "da", "sv"})
+        if "no" in expected_langs:
+            tolerated.update({"da", "sv"})
+        return tolerated
+
     def clean_sample(text: str) -> str:
         text = re.sub(r"\{[^}]+\}", " ", text)
         text = re.sub(r"%+[^%]+%+", " ", text)
@@ -121,20 +153,32 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
         text = re.sub(r"[^A-Za-z\u00C0-\u024F\s]", " ", text)
         return re.sub(r"\s+", " ", text).strip()
 
+    def is_structural_chunk(text: str) -> bool:
+        """Skip section labels/headers that are not representative language content."""
+        upper = text.upper().strip()
+        if not upper:
+            return True
+        structural_keywords = [
+            "MY OFFERS", "LAUNCH", "REMINDER", "OMS", "SMS", "TEMPLATE", "TITLE",
+            "BODY", "CTA", "TASK", "REWARD", "TERMS", "CONDITIONS", "VARIANT",
+        ]
+        return len(upper.split()) <= 6 and any(keyword in upper for keyword in structural_keywords)
+
     def evaluate_chunk(text: str, expected_langs: set[str]) -> dict:
         cleaned = clean_sample(text)
         tokens = [token.lower() for token in cleaned.split() if len(token) > 2]
         english_hits = sum(1 for token in tokens if token in ENGLISH_HINT_WORDS)
         english_ratio = english_hits / max(len(tokens), 1)
 
-        if not tokens or len(tokens) < 8:
-            if "en" not in expected_langs and english_hits >= 3:
+        if not tokens or len(tokens) < 12:
+            if "en" not in expected_langs and english_hits >= 6 and english_ratio >= 0.55:
                 return {
                     "detected_language": "en",
                     "mismatch": True,
                     "reason": "english_hint_short_sample",
                     "sample_length": len(cleaned),
                     "english_probability": 0.0,
+                    "detected_probability": 0.0,
                     "english_hint_ratio": round(english_ratio, 4),
                 }
             return {
@@ -143,6 +187,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "reason": "insufficient_sample",
                 "sample_length": len(cleaned),
                 "english_probability": 0.0,
+                "detected_probability": 0.0,
                 "english_hint_ratio": round(english_ratio, 4),
             }
 
@@ -161,12 +206,17 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                     lang_probabilities = {}
 
             english_prob = lang_probabilities.get("en", 0.0)
-            mismatch = detected_lang not in expected_langs
+            detected_prob = lang_probabilities.get(detected_lang, 0.0)
+            mismatch = (
+                detected_lang not in expected_langs
+                and detected_prob >= 0.8
+                and len(tokens) >= 20
+            )
 
-            if "en" not in expected_langs and (english_prob >= 0.35 or english_ratio >= 0.18):
+            if "en" not in expected_langs and english_prob >= 0.85 and english_ratio >= 0.28 and len(tokens) >= 20:
                 mismatch = True
-                if english_prob >= 0.35:
-                    detected_lang = "en"
+                detected_lang = "en"
+                detected_prob = english_prob
 
             return {
                 "detected_language": detected_lang,
@@ -174,6 +224,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "reason": "chunk_eval",
                 "sample_length": len(cleaned),
                 "english_probability": round(english_prob, 4),
+                "detected_probability": round(detected_prob, 4),
                 "english_hint_ratio": round(english_ratio, 4),
             }
         except LangDetectException:
@@ -183,6 +234,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "reason": "detection_failed",
                 "sample_length": len(cleaned),
                 "english_probability": 0.0,
+                "detected_probability": 0.0,
                 "english_hint_ratio": round(english_ratio, 4),
             }
 
@@ -193,30 +245,41 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
         if language_code in results:
             continue
 
-        expected_langs = {language_code.lower()[:2]}
-        expected_langs.update(code.lower()[:2] for code in LANGUAGE_MAPPING.get(language_code.upper(), []))
+        expected_langs = set()
+        mapping_codes = LANGUAGE_MAPPING.get(language_code.upper(), [])
+        if mapping_codes:
+            expected_langs.update(normalize_expected_lang(code) for code in mapping_codes)
+        else:
+            expected_langs.add(normalize_expected_lang(language_code))
+        tolerated_langs = expand_tolerated_langs(expected_langs)
 
-        chunks: list[str] = []
+        content_chunks: list[str] = []
 
         for section in [doc.launch_oms, doc.reminder_oms, doc.reward_oms]:
             if section and hasattr(section, "templates"):
                 for template in section.templates:
-                    chunks.append(" ".join(part for part in [template.title, template.body, template.cta, template.cta_mobile] if part))
+                    chunk = " ".join(part for part in [template.title, template.body, template.cta, template.cta_mobile] if part)
+                    if chunk and not is_structural_chunk(chunk):
+                        content_chunks.append(chunk)
 
         for section in [doc.launch_sms, doc.reminder_sms]:
             if section and hasattr(section, "templates"):
                 for template in section.templates:
                     if template.body:
-                        chunks.append(template.body)
+                        if not is_structural_chunk(template.body):
+                            content_chunks.append(template.body)
 
-        if getattr(doc, "raw_paragraphs", None):
-            chunks.extend(doc.raw_paragraphs)
+        # Fallback to raw paragraphs only when section parsing found no usable chunks.
+        if not content_chunks and getattr(doc, "raw_paragraphs", None):
+            for para in doc.raw_paragraphs:
+                if para and para.strip() and not is_structural_chunk(para):
+                    content_chunks.append(para)
 
-        chunk_results = [evaluate_chunk(chunk, expected_langs) for chunk in chunks if chunk and chunk.strip()]
+        chunk_results = [evaluate_chunk(chunk, tolerated_langs) for chunk in content_chunks if chunk and chunk.strip()]
         mismatches = [item for item in chunk_results if item.get("mismatch")]
 
         if mismatches:
-            winner = max(mismatches, key=lambda item: (item.get("english_probability", 0.0), item.get("english_hint_ratio", 0.0), item.get("sample_length", 0)))
+            winner = max(mismatches, key=lambda item: (item.get("english_probability", 0.0), item.get("detected_probability", 0.0), item.get("sample_length", 0)))
             winner["reason"] = "chunk_mismatch"
             results[language_code] = winner
             continue
@@ -232,6 +295,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
             "reason": "no_content",
             "sample_length": 0,
             "english_probability": 0.0,
+            "detected_probability": 0.0,
             "english_hint_ratio": 0.0,
         }
 

@@ -3162,15 +3162,6 @@ def main():
             resolved_events = st.session_state.get("qa_resolved_events", [])
             render_console_metrics(readiness, resolved_events)
 
-            # DEBUG: Show language detection results
-            st.caption("🔍 Detection Debug: " + " | ".join(
-                f"{lang}={readiness['by_language'][lang].get('language_mismatch', {}).get('detected', '?')}"
-                for lang in sorted(readiness["by_language"].keys())
-            ))
-
-            # Show language mismatch warnings (if any)
-            render_language_mismatch_warnings(readiness, parsed_docs)
-
             issue_langs = [lang for lang, status in status_by_lang.items() if status != "ready"]
             render_issue_chips(readiness, parsed_docs)
 

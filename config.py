@@ -32,7 +32,7 @@ LANGUAGE_MAPPING = {
     "RU_ET": ["ru-ee"],
     "RU_LV": ["ru-lv"],
     "TR": ["tr"],
-    "CA": ["ca"],
+    "CA": ["en-ca"],
 }
 
 # Human-readable language names for display
@@ -64,7 +64,40 @@ LANGUAGE_NAMES = {
     "RU_ET": "Russian (Estonia)",
     "RU_LV": "Russian (Latvia)",
     "TR": "Turkish",
-    "CA": "Catalan",
+    "CA": "English (Canada)",
+}
+
+# Language to Market mapping for audit report
+# Maps language codes to the market(s) they represent
+LANGUAGE_TO_MARKET = {
+    "EN": "Realm",
+    "EN_PE": "Peru",
+    "EN_GR": "Greece",
+    "EN_EE": "Estonia",
+    "EN_TR": "Turkey",
+    "ARG": "Argentina",
+    "BR": "Brazil",
+    "CL": "Chile",
+    "CO": "Colombia",
+    "DA": "Sweden",  # Danish speakers in Nordic region
+    "EL": "Greece",
+    "ES": "Realm",  # Generic Spanish
+    "ET": "Estonia",
+    "FI": "Finland",
+    "GR": "Greece",
+    "IS": "Realm",  # Iceland
+    "IT": "Italy",
+    "LV": "Latvia",
+    "MX": "Mexico",
+    "NO": "Norway",
+    "PE": "Peru",
+    "PL": "Poland",
+    "PY": "Paraguay",  # Note: Not in standard markets list, but supported
+    "RU": "Estonia",  # Russian speakers
+    "RU_ET": "Estonia",
+    "RU_LV": "Latvia",
+    "TR": "Turkey",
+    "CA": "Canada",
 }
 
 # Template types and their content fields

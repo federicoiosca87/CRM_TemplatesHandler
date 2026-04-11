@@ -7,11 +7,15 @@ Streamlit app for converting localized Word documents into CMS-ready template pa
 import shutil
 import tempfile
 import zipfile
+import base64
+import mimetypes
+import textwrap
 from datetime import datetime
 from pathlib import Path
 from io import BytesIO
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 from config import (
@@ -122,7 +126,51 @@ def validate_placeholders(text: str) -> list[str]:
     return invalid
 
 
-def bbcode_to_html(text: str) -> str:
+def highlight_placeholders_campaign_style(html_text: str) -> str:
+    """Highlight placeholders with campaign-style status colors.
+
+    Available placeholders are shown in amber. Unknown placeholders are shown in red.
+    """
+    if not html_text:
+        return ""
+
+    def replacer(match: re.Match) -> str:
+        placeholder_name = match.group(1)
+        full_token = f"%%{placeholder_name}%%"
+
+        if placeholder_name in VALID_PLACEHOLDERS:
+            return (
+                '<span style="'
+                'background:#ffefbf;'
+                'color:#6f5607;'
+                'border:1px dashed #d8b45a;'
+                'border-radius:6px;'
+                'padding:0 4px;'
+                'white-space:nowrap;'
+                'display:inline-block;'
+                '">'
+                f'{full_token}'
+                '</span>'
+            )
+
+        return (
+            '<span style="'
+            'background:#ffc2bc;'
+            'color:#6f1812;'
+            'border:1px solid #d97770;'
+            'border-radius:6px;'
+            'padding:0 4px;'
+            'white-space:nowrap;'
+            'display:inline-block;'
+            '">'
+            f'{full_token}'
+            '</span>'
+        )
+
+    return re.sub(r'%%([A-Za-z0-9_]+)%%', replacer, html_text)
+
+
+def bbcode_to_html(text: str, highlight_placeholders: bool = True) -> str:
     """Convert BBCode to HTML for preview."""
     if not text:
         return ""
@@ -142,17 +190,102 @@ def bbcode_to_html(text: str) -> str:
     html = re.sub(r'\[li\](.*?)\[/li\]', r'<li>\1</li>', html, flags=re.DOTALL)
     html = re.sub(r'\[url=(.*?)\](.*?)\[/url\]', r'<a href="\1" style="color: #6db3f2;">\2</a>', html, flags=re.DOTALL)
     
-    # Highlight placeholders with a subtle colored badge
-    html = re.sub(
-        r'%%([A-Za-z0-9_]+)%%',
-        r'<code style="background: linear-gradient(135deg, #2d5a27 0%, #1a3d1a 100%); color: #90EE90; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; white-space: nowrap;">%%\1%%</code>',
-        html
-    )
+    if highlight_placeholders:
+        # Highlight placeholders with a subtle colored badge
+        html = re.sub(
+            r'%%([A-Za-z0-9_]+)%%',
+            r'<code style="background: linear-gradient(135deg, #2d5a27 0%, #1a3d1a 100%); color: #90EE90; padding: 2px 6px; border-radius: 4px; font-size: 0.85em; white-space: nowrap;">%%\1%%</code>',
+            html
+        )
     
     # Convert newlines to <br>
     html = html.replace('\n', '<br>')
     
     return html
+
+
+def image_file_to_data_uri(image_path: Path) -> str:
+    """Encode a local image file as data URI for HTML preview embedding."""
+    if not image_path.exists():
+        return ""
+
+    mime_type, _ = mimetypes.guess_type(str(image_path))
+    if not mime_type:
+        mime_type = "image/jpeg"
+
+    encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def render_oms_desktop_preview(title: str, body: str, cta: str, image_data_uri: str) -> str:
+    """Render a desktop OMS card preview that mimics production layout."""
+    import html as html_module
+
+    safe_title = highlight_placeholders_campaign_style(html_module.escape(title or ""))
+    safe_cta = highlight_placeholders_campaign_style(html_module.escape(cta or "Opt-in"))
+    received_text = datetime.now().strftime("Received on %A, %d %B %Y at %H:%M")
+    safe_received = html_module.escape(received_text)
+    body_html = bbcode_to_html(body or "", highlight_placeholders=False)
+    body_html = highlight_placeholders_campaign_style(body_html)
+
+    image_html = ""
+    if image_data_uri:
+        image_html = f'<img src="{image_data_uri}" alt="OMS image" style="width: 54px; height: 54px; border-radius: 8px; object-fit: cover; flex-shrink: 0;">'
+
+    return textwrap.dedent(f"""
+    <div style="
+        border: 1px solid #d9dde4;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #1b1f24;
+        padding: 14px;
+        position: relative;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.02);
+    ">
+        <div style="
+            position: absolute;
+            right: 16px;
+            top: 16px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4a8df6;
+        "></div>
+
+        <div style="display: flex; gap: 10px; align-items: flex-start; margin-bottom: 10px;">
+            {image_html}
+            <div style="padding-right: 18px;">
+                <div style="font-size: 17px; line-height: 1.3; font-weight: 650; color: #14181d; margin: 0 0 3px 0;">{safe_title}</div>
+                <div style="font-size: 14px; color: #5f6b7a;">{safe_received}</div>
+            </div>
+        </div>
+
+        <div style="font-size: 15px; line-height: 1.42; color: #161b22; margin-top: 6px; margin-bottom: 12px;">
+            {body_html}
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 4px;">
+            <button style="
+                border: 0;
+                background: transparent;
+                color: #ff6a00;
+                font-size: 14px;
+                font-weight: 500;
+                cursor: default;
+            ">Delete</button>
+            <button style="
+                border: 0;
+                border-radius: 6px;
+                background: #ff6a00;
+                color: #ffffff;
+                font-size: 14px;
+                font-weight: 700;
+                padding: 8px 16px;
+                cursor: default;
+            ">{safe_cta}</button>
+        </div>
+    </div>
+    """).strip()
 
 
 def check_missing_content(template_type: str, title: str = None, body: str = None, cta: str = None) -> list[str]:
@@ -1015,15 +1148,20 @@ def main():
                                 edited_cta = st.text_input("CTA", value=oms_cta, key=cta_key)
                                 
                                 if edited_body:
-                                    st.markdown("**Preview:**")
-                                    preview_html = bbcode_to_html(edited_body)
-                                    # Use theme-aware styling for dark mode support
-                                    st.markdown(
-                                        f'<div style="background-color: rgba(255, 255, 255, 0.1); '
-                                        f'padding: 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.2); '
-                                        f'font-size: 14px; line-height: 1.6;">{preview_html}</div>',
-                                        unsafe_allow_html=True
+                                    st.markdown("**Desktop OMS Preview:**")
+                                    st.caption("Legend: Amber = available placeholder, Red = not available in Campaign Wizard")
+                                    image_data_uri = ""
+                                    if selected_image_file:
+                                        image_path = Path(__file__).parent / "images" / selected_image_file
+                                        image_data_uri = image_file_to_data_uri(image_path)
+
+                                    oms_card_html = render_oms_desktop_preview(
+                                        title=edited_title,
+                                        body=edited_body,
+                                        cta=edited_cta,
+                                        image_data_uri=image_data_uri,
                                     )
+                                    components.html(oms_card_html, height=430, scrolling=True)
                                 
                                 all_edited = edited_title + " " + edited_body + " " + edited_cta
                                 invalid = validate_placeholders(all_edited)

@@ -3776,43 +3776,60 @@ def main():
             
             send_conditions_label = ", ".join(st.session_state.get("send_conditions", [])) or "None"
             variants_label = ", ".join(st.session_state.get("variants", [])) or "None"
-            st.markdown(
-                (
-                    "<div class='console-panel'>"
-                    "<span class='section-kicker'>CONFIGURATION</span>"
-                    "<h3 style='margin:0 0 12px 0;font-size:1.05rem;color:var(--rc-text);'>Offer &amp; Content Summary</h3>"
-                    "<div class='panel-grid'>"
-                    "<div class='mini-panel'>"
-                    "<h4>Offer Details</h4>"
-                    f"<p><strong>Offer Key</strong><br><code>{html.escape(str(st.session_state.get('offer_key', 'Not set')))}</code></p>"
-                    f"<p style='margin-top:8px;'><strong>Task / Reward</strong><br>{html.escape(str(st.session_state.get('task_type', 'Not set')))} / {html.escape(str(st.session_state.get('reward_type', 'Not set')))}</p>"
-                    "</div>"
-                    "<div class='mini-panel'>"
-                    "<h4>Template Payload</h4>"
-                    f"<p><strong>Send Conditions</strong><br>{html.escape(send_conditions_label)}</p>"
-                    f"<p style='margin-top:8px;'><strong>Variants</strong><br>{html.escape(variants_label)}</p>"
-                    "</div>"
-                    "<div class='mini-panel'>"
-                    "<h4>Content Scope</h4>"
-                    f"<p><strong>Languages</strong><br>{len(st.session_state.get('parsed_docs', []))}</p>"
-                    f"<p style='margin-top:8px;'><strong>Markets</strong><br>{html.escape(', '.join(st.session_state.get('audit_markets', [])) or 'Auto-detect pending')}</p>"
-                    "</div>"
-                    "</div>"
-                    "</div>"
-                ),
-                unsafe_allow_html=True,
+            lang_count = len(st.session_state.get("parsed_docs", []))
+            markets_label = ", ".join(st.session_state.get("audit_markets", [])) or "Auto-detect pending"
+            offer_key_val = html.escape(str(st.session_state.get("offer_key", "Not set")))
+            task_reward_val = f"{html.escape(str(st.session_state.get('task_type', 'Not set')))} / {html.escape(str(st.session_state.get('reward_type', 'Not set')))}"
+
+            tbl = (
+                "<table style='width:100%;border-collapse:collapse;margin:0;'>"
+                "<tr>"
+                "<td style='padding:8px 12px;border-bottom:1px solid rgba(55,75,100,0.35);width:33%;'>"
+                f"<span style='color:var(--rc-muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;'>Offer Key</span><br>"
+                f"<span style='color:var(--rc-blue);font-size:0.88rem;'>{offer_key_val}</span></td>"
+                "<td style='padding:8px 12px;border-bottom:1px solid rgba(55,75,100,0.35);width:33%;'>"
+                f"<span style='color:var(--rc-muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;'>Task / Reward</span><br>"
+                f"<span style='color:var(--rc-text);font-size:0.88rem;'>{task_reward_val}</span></td>"
+                "<td style='padding:8px 12px;border-bottom:1px solid rgba(55,75,100,0.35);width:33%;'>"
+                f"<span style='color:var(--rc-muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;'>Variants</span><br>"
+                f"<span style='color:var(--rc-text);font-size:0.88rem;'>{html.escape(variants_label)}</span></td>"
+                "</tr>"
+                "<tr>"
+                "<td style='padding:8px 12px;'>"
+                f"<span style='color:var(--rc-muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;'>Send Conditions</span><br>"
+                f"<span style='color:var(--rc-text);font-size:0.88rem;'>{html.escape(send_conditions_label)}</span></td>"
+                "<td style='padding:8px 12px;'>"
+                f"<span style='color:var(--rc-muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;'>Languages</span><br>"
+                f"<span style='color:var(--rc-text);font-size:0.88rem;'>{lang_count}</span></td>"
+                "<td style='padding:8px 12px;'>"
+                f"<span style='color:var(--rc-muted);font-size:0.78rem;text-transform:uppercase;letter-spacing:0.05em;'>Markets</span><br>"
+                f"<span style='color:var(--rc-text);font-size:0.88rem;'>{html.escape(markets_label)}</span></td>"
+                "</tr>"
+                "</table>"
             )
-            
+
+            pkg_row = (
+                "<div style='display:flex;gap:24px;margin-top:14px;padding-top:10px;border-top:1px solid rgba(55,75,100,0.35);'>"
+                "<div style='flex:1;'>"
+                "<span style='color:var(--rc-text);font-size:0.85rem;font-weight:600;'>SMS</span>"
+                "<span style='color:var(--rc-muted);font-size:0.8rem;margin-left:8px;'>SmsTemplate · body · XML</span></div>"
+                "<div style='flex:1;'>"
+                "<span style='color:var(--rc-text);font-size:0.85rem;font-weight:600;'>OMS</span>"
+                "<span style='color:var(--rc-muted);font-size:0.8rem;margin-left:8px;'>OmsTemplate · title · body · CTA</span></div>"
+                "<div style='flex:1;'>"
+                "<span style='color:var(--rc-text);font-size:0.85rem;font-weight:600;'>T&amp;C</span>"
+                "<span style='color:var(--rc-muted);font-size:0.8rem;margin-left:8px;'>TCTemplate · significant · full terms</span></div>"
+                "</div>"
+            )
+
             st.markdown(
                 (
-                    "<div class='console-panel'>"
-                    "<span class='section-kicker'>PACKAGES</span>"
-                    "<h3 style='margin:0 0 12px 0;font-size:1.05rem;color:var(--rc-text);'>CMS Export Packages</h3>"
-                    "<div class='panel-grid'>"
-                    "<div class='mini-panel'><h4>SMS Package</h4><ul><li>CampaignWizardSmsTemplate</li><li>Template body content</li><li>Per-language XML files</li></ul></div>"
-                    "<div class='mini-panel'><h4>OMS Package</h4><ul><li>CampaignWizardOmsTemplate</li><li>Title, body, CTA</li><li>ClaimedReward included by default</li></ul></div>"
-                    "<div class='mini-panel'><h4>T&C Package</h4><ul><li>CampaignWizardTCTemplate</li><li>Significant terms</li><li>Full terms & conditions</li></ul></div>"
-                    "</div>"
+                    "<div style='background:linear-gradient(180deg,rgba(20,27,36,0.98),rgba(14,19,26,0.98));"
+                    "border:1px solid rgba(55,75,100,0.45);border-radius:16px;padding:18px 22px;margin-bottom:16px;'>"
+                    "<span style='color:var(--bs-violet);text-transform:uppercase;letter-spacing:0.1em;font-size:0.75rem;'>CONFIGURATION</span>"
+                    "<h3 style='margin:2px 0 10px 0;font-size:1.05rem;color:var(--rc-text);'>Offer &amp; Content Summary</h3>"
+                    f"{tbl}"
+                    f"{pkg_row}"
                     "</div>"
                 ),
                 unsafe_allow_html=True,
@@ -3820,7 +3837,7 @@ def main():
             
             st.divider()
             
-            # Audit Report Metadata — styled to match the rest of the export tab
+            # Audit Report Metadata — compact inline layout
             audit_offer_type = st.session_state.get("offer_key", "Not set")
             st.session_state["audit_offer_type"] = audit_offer_type
             detected_markets = detect_markets_from_languages(parsed_docs)
@@ -3828,14 +3845,15 @@ def main():
 
             st.markdown(
                 (
-                    "<div class='console-panel'>"
-                    "<span class='section-kicker'>AUDIT CONTEXT</span>"
-                    "<h3 style='margin:0 0 4px 0;font-size:1.1rem;color:var(--rc-text);'>Report Metadata</h3>"
-                    "<p style='margin:0 0 12px 0;color:var(--rc-muted);font-size:0.82rem;'>Offer type and markets are auto-detected. Notes are included in the downloaded report.</p>"
-                    "<div class='panel-grid' style='grid-template-columns:1fr 1fr;'>"
-                    f"<div class='mini-panel'><p><strong>Offer Type</strong><br><code>{html.escape(str(audit_offer_type))}</code></p></div>"
-                    f"<div class='mini-panel'><p><strong>Markets</strong><br>{html.escape(', '.join(detected_markets)) if detected_markets else '<em>None detected</em>'}</p></div>"
-                    "</div>"
+                    "<div style='background:linear-gradient(180deg,rgba(20,27,36,0.98),rgba(14,19,26,0.98));"
+                    "border:1px solid rgba(55,75,100,0.45);border-radius:16px;padding:18px 22px;margin-bottom:8px;'>"
+                    "<span style='color:var(--bs-violet);text-transform:uppercase;letter-spacing:0.1em;font-size:0.75rem;'>AUDIT CONTEXT</span>"
+                    "<p style='margin:4px 0 0 0;color:var(--rc-muted);font-size:0.82rem;'>"
+                    f"Offer type and markets are auto-detected. <strong style='color:var(--rc-text);'>Offer:</strong> "
+                    f"<span style='color:var(--rc-blue);'>{html.escape(str(audit_offer_type))}</span>"
+                    f" &nbsp;·&nbsp; <strong style='color:var(--rc-text);'>Markets:</strong> "
+                    f"{html.escape(', '.join(detected_markets)) if detected_markets else '<em>None detected</em>'}"
+                    "</p>"
                     "</div>"
                 ),
                 unsafe_allow_html=True,

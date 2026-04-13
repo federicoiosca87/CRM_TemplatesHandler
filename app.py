@@ -2334,7 +2334,10 @@ st.markdown("""
         min-height: 90px !important;
         border-radius: 16px !important;
         padding: 16px 18px !important;
-        text-align: left !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
         transform: none !important;
         box-shadow: none !important;
         transition: all 0.2s ease-in-out !important;
@@ -2354,10 +2357,11 @@ st.markdown("""
     .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button p,
     .st-key-metric_resolved div[data-testid="stButton"] button p {
         color: var(--rc-text) !important;
-        text-align: left !important;
+        text-align: center !important;
         white-space: pre-line !important;
         margin: 0 !important;
-        line-height: 1.6 !important;
+        line-height: 1.45 !important;
+        width: 100% !important;
     }
 
     /* Hover effect on clickable cards (interactive) */
@@ -2741,6 +2745,7 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             f"READY\n{readiness['ready_count']}",
             key="metric_ready",
             type="secondary",
+            width="stretch",
         ):
             st.session_state[toggle_key] = "ready" if st.session_state[toggle_key] != "ready" else None
             st.rerun()
@@ -2750,6 +2755,7 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             f"MISSING\n{readiness['missing_count']}",
             key="metric_missing",
             type="secondary",
+            width="stretch",
         ):
             st.session_state[toggle_key] = "missing" if st.session_state[toggle_key] != "missing" else None
             st.rerun()
@@ -2759,6 +2765,7 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             f"INVALID\n{readiness['invalid_count']}",
             key="metric_invalid",
             type="secondary",
+            width="stretch",
         ):
             st.session_state[toggle_key] = "invalid" if st.session_state[toggle_key] != "invalid" else None
             st.rerun()
@@ -2770,6 +2777,7 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             key="qa_toggle_issue_actions_from_metric",
             type="secondary",
             disabled=mismatch_count == 0,
+            width="stretch",
         ):
             st.session_state[toggle_key] = "mismatch" if st.session_state[toggle_key] != "mismatch" else None
             st.rerun()
@@ -2779,6 +2787,7 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             f"RESOLVED\n{resolved_count}",
             key="metric_resolved",
             type="secondary",
+            width="stretch",
         )
 
 

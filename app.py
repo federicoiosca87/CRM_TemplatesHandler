@@ -238,12 +238,49 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "english_hint_ratio": round(english_ratio, 4),
             }
 
+    def select_better_result(existing: dict | None, candidate: dict) -> dict:
+        """Pick the more useful detection result for the same language across multiple docs."""
+        if not existing:
+            return candidate
+
+        existing_mismatch = bool(existing.get("mismatch"))
+        candidate_mismatch = bool(candidate.get("mismatch"))
+
+        # Always prefer a mismatch if one doc has it and another does not.
+        if candidate_mismatch and not existing_mismatch:
+            return candidate
+        if existing_mismatch and not candidate_mismatch:
+            return existing
+
+        # If both are mismatches, keep the stronger signal.
+        if candidate_mismatch and existing_mismatch:
+            candidate_score = (
+                float(candidate.get("english_probability", 0.0)),
+                float(candidate.get("detected_probability", 0.0)),
+                int(candidate.get("sample_length", 0)),
+            )
+            existing_score = (
+                float(existing.get("english_probability", 0.0)),
+                float(existing.get("detected_probability", 0.0)),
+                int(existing.get("sample_length", 0)),
+            )
+            return candidate if candidate_score >= existing_score else existing
+
+        # Neither is mismatch: keep the richer sample.
+        candidate_score = (
+            int(candidate.get("sample_length", 0)),
+            float(candidate.get("detected_probability", 0.0)),
+        )
+        existing_score = (
+            int(existing.get("sample_length", 0)),
+            float(existing.get("detected_probability", 0.0)),
+        )
+        return candidate if candidate_score >= existing_score else existing
+
     results = {}
 
     for doc in parsed_docs:
         language_code = doc.language_code
-        if language_code in results:
-            continue
 
         expected_langs = set()
         mapping_codes = LANGUAGE_MAPPING.get(language_code.upper(), [])
@@ -279,17 +316,24 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
         mismatches = [item for item in chunk_results if item.get("mismatch")]
 
         if mismatches:
-            winner = max(mismatches, key=lambda item: (item.get("english_probability", 0.0), item.get("detected_probability", 0.0), item.get("sample_length", 0)))
-            winner["reason"] = "chunk_mismatch"
-            results[language_code] = winner
+            winner = max(
+                mismatches,
+                key=lambda item: (
+                    item.get("english_probability", 0.0),
+                    item.get("detected_probability", 0.0),
+                    item.get("sample_length", 0),
+                ),
+            )
+            winner = {**winner, "reason": "chunk_mismatch"}
+            results[language_code] = select_better_result(results.get(language_code), winner)
             continue
 
         if chunk_results:
             best_non_mismatch = max(chunk_results, key=lambda item: item.get("sample_length", 0))
-            results[language_code] = best_non_mismatch
+            results[language_code] = select_better_result(results.get(language_code), best_non_mismatch)
             continue
 
-        results[language_code] = {
+        no_content_result = {
             "detected_language": None,
             "mismatch": False,
             "reason": "no_content",
@@ -298,6 +342,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
             "detected_probability": 0.0,
             "english_hint_ratio": 0.0,
         }
+        results[language_code] = select_better_result(results.get(language_code), no_content_result)
 
     return results
 
@@ -3243,6 +3288,8 @@ def main():
             st.session_state["qa_last_selected_lang"] = selected_lang
             
             selected_doc = next((d for d in parsed_docs if d.language_code == selected_lang), None)
+            selected_mismatch_info = readiness["by_language"].get(selected_lang, {}).get("language_mismatch", {})
+            selected_lang_has_mismatch = bool(selected_mismatch_info.get("detected"))
             
             if selected_doc:
                 available_safe_fixes = count_safe_fixes_for_language(selected_lang, selected_doc)
@@ -3303,9 +3350,20 @@ def main():
                             char_count, color, char_msg = get_sms_char_info(sms_effective)
                             invalid_placeholders = validate_placeholders(sms_effective)
                             missing = check_missing_content("SMS", body=sms_effective)
-                            
-                            status_icon = "✅" if not invalid_placeholders and not missing and color == "green" else "⚠️"
-                            expander_label = f"{status_icon} {sms_type} - Template {template.variant} ({template.send_condition})"
+
+                            sms_flags: list[str] = []
+                            if invalid_placeholders:
+                                sms_flags.append("✖")  # Placeholder problems
+                            if missing:
+                                sms_flags.append("⚠")  # Missing required content
+                            if color in {"orange", "red"}:
+                                sms_flags.append("📏")  # SMS length segment risk
+                            if not sms_flags:
+                                sms_flags.append("✅")
+                            if selected_lang_has_mismatch:
+                                sms_flags.append("🌐")  # Language review required
+
+                            expander_label = f"{' '.join(sms_flags)} {sms_type} - Template {template.variant} ({template.send_condition})"
                             
                             with st.expander(expander_label):
                                 fix_buffer_key = f"fix_buffer_{sms_key}"
@@ -3374,9 +3432,18 @@ def main():
                             all_text = effective_title + " " + effective_body + " " + effective_cta
                             invalid_placeholders = validate_placeholders(all_text)
                             missing = check_missing_content("OMS", title=effective_title, body=effective_body, cta=effective_cta)
-                            
-                            status_icon = "✅" if not invalid_placeholders and not missing else "⚠️"
-                            expander_label = f"{status_icon} {oms_type} - Template {template.variant} ({template.send_condition})"
+
+                            oms_flags: list[str] = []
+                            if invalid_placeholders:
+                                oms_flags.append("✖")
+                            if missing:
+                                oms_flags.append("⚠")
+                            if not oms_flags:
+                                oms_flags.append("✅")
+                            if selected_lang_has_mismatch:
+                                oms_flags.append("🌐")
+
+                            expander_label = f"{' '.join(oms_flags)} {oms_type} - Template {template.variant} ({template.send_condition})"
                             
                             with st.expander(expander_label):
                                 sync_fix_buffer_to_widget(title_key, oms_title)

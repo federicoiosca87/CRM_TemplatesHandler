@@ -2457,8 +2457,8 @@ st.markdown("""
     }
 
     .mini-panel {
-        background: var(--rc-panel);
-        border: 1px solid var(--rc-border);
+        background: linear-gradient(180deg, rgba(22, 30, 42, 0.95), rgba(18, 25, 34, 0.95));
+        border: 1px solid rgba(55, 75, 100, 0.55);
         border-radius: 16px;
         padding: 18px 20px;
         min-height: 140px;
@@ -2481,6 +2481,22 @@ st.markdown("""
 
     .mini-panel ul {
         padding-left: 20px;
+    }
+
+    .mini-panel li {
+        color: var(--rc-muted);
+    }
+
+    .mini-panel strong {
+        color: var(--rc-text);
+    }
+
+    .mini-panel code {
+        background: rgba(125, 183, 255, 0.1);
+        color: var(--rc-blue);
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.85rem;
     }
 
     .section-kicker {
@@ -3762,10 +3778,13 @@ def main():
             variants_label = ", ".join(st.session_state.get("variants", [])) or "None"
             st.markdown(
                 (
+                    "<div class='console-panel'>"
+                    "<span class='section-kicker'>CONFIGURATION</span>"
+                    "<h3 style='margin:0 0 12px 0;font-size:1.05rem;color:var(--rc-text);'>Offer &amp; Content Summary</h3>"
                     "<div class='panel-grid'>"
                     "<div class='mini-panel'>"
                     "<h4>Offer Details</h4>"
-                    f"<p><strong>Offer Key</strong><br>{html.escape(str(st.session_state.get('offer_key', 'Not set')))}</p>"
+                    f"<p><strong>Offer Key</strong><br><code>{html.escape(str(st.session_state.get('offer_key', 'Not set')))}</code></p>"
                     f"<p style='margin-top:8px;'><strong>Task / Reward</strong><br>{html.escape(str(st.session_state.get('task_type', 'Not set')))} / {html.escape(str(st.session_state.get('reward_type', 'Not set')))}</p>"
                     "</div>"
                     "<div class='mini-panel'>"
@@ -3779,18 +3798,21 @@ def main():
                     f"<p style='margin-top:8px;'><strong>Markets</strong><br>{html.escape(', '.join(st.session_state.get('audit_markets', [])) or 'Auto-detect pending')}</p>"
                     "</div>"
                     "</div>"
+                    "</div>"
                 ),
                 unsafe_allow_html=True,
             )
             
-            st.divider()
-            
             st.markdown(
                 (
+                    "<div class='console-panel'>"
+                    "<span class='section-kicker'>PACKAGES</span>"
+                    "<h3 style='margin:0 0 12px 0;font-size:1.05rem;color:var(--rc-text);'>CMS Export Packages</h3>"
                     "<div class='panel-grid'>"
                     "<div class='mini-panel'><h4>SMS Package</h4><ul><li>CampaignWizardSmsTemplate</li><li>Template body content</li><li>Per-language XML files</li></ul></div>"
                     "<div class='mini-panel'><h4>OMS Package</h4><ul><li>CampaignWizardOmsTemplate</li><li>Title, body, CTA</li><li>ClaimedReward included by default</li></ul></div>"
                     "<div class='mini-panel'><h4>T&C Package</h4><ul><li>CampaignWizardTCTemplate</li><li>Significant terms</li><li>Full terms & conditions</li></ul></div>"
+                    "</div>"
                     "</div>"
                 ),
                 unsafe_allow_html=True,

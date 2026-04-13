@@ -148,9 +148,16 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
 
     def clean_sample(text: str) -> str:
         text = re.sub(r"\{[^}]+\}", " ", text)
-        text = re.sub(r"%+[^%]+%+", " ", text)
+        text = re.sub(r"%%[^%]*%%", " ", text)
         text = re.sub(r"https?://\S+|www\.\S+", " ", text)
         text = re.sub(r"[^A-Za-z\u00C0-\u024F\s]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def clean_for_detection(text: str) -> str:
+        """Strip placeholders and URLs but preserve all Unicode chars for accurate langdetect."""
+        text = re.sub(r"\{[^}]+\}", " ", text)
+        text = re.sub(r"%%[^%]*%%", " ", text)
+        text = re.sub(r"https?://\S+|www\.\S+", " ", text)
         return re.sub(r"\s+", " ", text).strip()
 
     def is_structural_chunk(text: str) -> bool:
@@ -166,17 +173,19 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
 
     def evaluate_chunk(text: str, expected_langs: set[str]) -> dict:
         cleaned = clean_sample(text)
-        tokens = [token.lower() for token in cleaned.split() if len(token) > 2]
-        english_hits = sum(1 for token in tokens if token in ENGLISH_HINT_WORDS)
-        english_ratio = english_hits / max(len(tokens), 1)
+        detection_text = clean_for_detection(text)
+        latin_tokens = [token.lower() for token in cleaned.split() if len(token) > 2]
+        all_tokens = [token.lower() for token in detection_text.split() if len(token) > 2]
+        english_hits = sum(1 for token in latin_tokens if token in ENGLISH_HINT_WORDS)
+        english_ratio = english_hits / max(len(latin_tokens), 1)
 
-        if not tokens or len(tokens) < 12:
+        if not all_tokens or len(all_tokens) < 12:
             if "en" not in expected_langs and english_hits >= 6 and english_ratio >= 0.55:
                 return {
                     "detected_language": "en",
                     "mismatch": True,
                     "reason": "english_hint_short_sample",
-                    "sample_length": len(cleaned),
+                    "sample_length": len(detection_text),
                     "english_probability": 0.0,
                     "detected_probability": 0.0,
                     "english_hint_ratio": round(english_ratio, 4),
@@ -185,14 +194,14 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "detected_language": None,
                 "mismatch": False,
                 "reason": "insufficient_sample",
-                "sample_length": len(cleaned),
+                "sample_length": len(detection_text),
                 "english_probability": 0.0,
                 "detected_probability": 0.0,
                 "english_hint_ratio": round(english_ratio, 4),
             }
 
         try:
-            text_for_detection = cleaned[:3000]
+            text_for_detection = detection_text[:3000]
             detected_lang = langdetect_detect(text_for_detection).lower()[:2]
 
             lang_probabilities = {}
@@ -210,10 +219,10 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
             mismatch = (
                 detected_lang not in expected_langs
                 and detected_prob >= 0.8
-                and len(tokens) >= 20
+                and len(all_tokens) >= 20
             )
 
-            if "en" not in expected_langs and english_prob >= 0.85 and english_ratio >= 0.28 and len(tokens) >= 20:
+            if "en" not in expected_langs and english_prob >= 0.85 and english_ratio >= 0.28 and len(all_tokens) >= 20:
                 mismatch = True
                 detected_lang = "en"
                 detected_prob = english_prob
@@ -222,7 +231,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "detected_language": detected_lang,
                 "mismatch": mismatch,
                 "reason": "chunk_eval",
-                "sample_length": len(cleaned),
+                "sample_length": len(detection_text),
                 "english_probability": round(english_prob, 4),
                 "detected_probability": round(detected_prob, 4),
                 "english_hint_ratio": round(english_ratio, 4),
@@ -232,7 +241,7 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                 "detected_language": None,
                 "mismatch": False,
                 "reason": "detection_failed",
-                "sample_length": len(cleaned),
+                "sample_length": len(detection_text),
                 "english_probability": 0.0,
                 "detected_probability": 0.0,
                 "english_hint_ratio": round(english_ratio, 4),

@@ -2722,47 +2722,53 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
     resolved_count = len(resolved_events)
     mismatch_count = readiness.get("mismatch_count", 0)
     resolved_text = " | ".join(resolved_events[-2:]) if resolved_events else "No resolutions yet"
-    toggle_key = "qa_issue_actions_expanded"
+    toggle_key = "qa_issue_type_filter"
     if toggle_key not in st.session_state:
-        st.session_state[toggle_key] = False
+        st.session_state[toggle_key] = None
 
     cols = st.columns(5)
 
     with cols[0]:
-        st.button(
-            f"READY\n{readiness['ready_count']}\nLanguages cleared for export",
+        if st.button(
+            f"READY\n{readiness['ready_count']}",
             key="metric_ready",
             type="secondary",
-        )
+        ):
+            st.session_state[toggle_key] = "ready" if st.session_state[toggle_key] != "ready" else None
+            st.rerun()
 
     with cols[1]:
-        st.button(
-            f"MISSING\n{readiness['missing_count']}\nIncomplete content blocks",
+        if st.button(
+            f"MISSING\n{readiness['missing_count']}",
             key="metric_missing",
             type="secondary",
-        )
+        ):
+            st.session_state[toggle_key] = "missing" if st.session_state[toggle_key] != "missing" else None
+            st.rerun()
 
     with cols[2]:
-        st.button(
-            f"INVALID\n{readiness['invalid_count']}\nPlaceholder issues still open",
+        if st.button(
+            f"INVALID\n{readiness['invalid_count']}",
             key="metric_invalid",
             type="secondary",
-        )
+        ):
+            st.session_state[toggle_key] = "invalid" if st.session_state[toggle_key] != "invalid" else None
+            st.rerun()
 
     with cols[3]:
-        tile_label = f"POTENTIAL WRONG LANGUAGE\n{mismatch_count}\nDetected content-language mismatches"
+        tile_label = f"POTENTIAL WRONG LANGUAGE\n{mismatch_count}"
         if st.button(
             tile_label,
             key="qa_toggle_issue_actions_from_metric",
             type="secondary",
             disabled=mismatch_count == 0,
         ):
-            st.session_state[toggle_key] = not st.session_state[toggle_key]
+            st.session_state[toggle_key] = "mismatch" if st.session_state[toggle_key] != "mismatch" else None
             st.rerun()
 
     with cols[4]:
         st.button(
-            f"RESOLVED\n{resolved_count}\n{resolved_text}",
+            f"RESOLVED\n{resolved_count}",
             key="metric_resolved",
             type="secondary",
         )
@@ -2770,6 +2776,10 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
 
 def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> None:
     """Render clickable issue chips for direct language navigation."""
+    filter_type = st.session_state.get("qa_issue_type_filter", None)
+    if filter_type is None:
+        return
+
     issue_buttons: list[tuple[str, str]] = []
 
     for doc in parsed_docs:
@@ -2777,20 +2787,18 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
         lang_name = LANGUAGE_NAMES.get(lang, lang)
         state = readiness["by_language"][lang]["status"]
         mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
-        # Prioritize mismatch actions so every detected wrong-language case
-        # always gets its own direct navigation button.
-        if mismatch_info.get("detected"):
+
+        if filter_type == "mismatch" and mismatch_info.get("detected"):
             detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
             issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
+        elif filter_type == "missing" and state == "missing":
+            issue_buttons.append((lang, f"⚠ {lang} {lang_name} (missing content)"))
+        elif filter_type == "invalid" and state == "invalid":
+            issue_buttons.append((lang, f"✖ {lang} {lang_name} (invalid placeholders)"))
+        elif filter_type == "ready" and state == "ready":
+            issue_buttons.append((lang, f"✓ {lang} {lang_name} (ready)"))
 
     if not issue_buttons:
-        return
-
-    toggle_key = "qa_issue_actions_expanded"
-    if toggle_key not in st.session_state:
-        st.session_state[toggle_key] = False
-
-    if not st.session_state[toggle_key]:
         return
 
     st.markdown("<div class='chip-row'>", unsafe_allow_html=True)

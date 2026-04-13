@@ -3256,12 +3256,12 @@ def main():
                         ):
                             changes = apply_safe_fixes_for_language(selected_lang, selected_doc)
                             if changes:
-                                st.session_state["qa_advance_after_fix"] = True
+                                # Stay on current language, don't jump
                                 history = st.session_state.get("qa_fix_history", [])
                                 history.append(f"{selected_lang}: " + ", ".join(changes[:4]))
                                 st.session_state["qa_fix_history"] = history[-8:]
                                 st.session_state["qa_last_fix_summary"] = (
-                                    f"Applied safe fixes in {selected_lang}: " + ", ".join(changes[:5])
+                                    f"✅ Applied safe fixes in {selected_lang}: " + ", ".join(changes[:5])
                                 )
                                 st.rerun()
                             else:
@@ -3511,10 +3511,9 @@ def main():
                         set_editor_value(sig_key, edited_sig)
                         sig_invalid = validate_placeholders(edited_sig)
                         if sig_invalid:
-                            render_invalid_placeholder_assistant(
-                                field_label="Significant Terms",
-                                text=edited_sig,
-                                fix_buffer_key=sig_fix_buffer,
+                                icon = "⚠️" if sig_invalid else "✅"
+                                render_invalid_placeholder_assistant(
+                                    field_label=f"{icon} Significant Terms",
                                 button_key=f"fix_{sig_key}",
                                 language_code=selected_lang,
                                 tracking_field_label="T&C Significant Terms",
@@ -3527,8 +3526,9 @@ def main():
                         set_editor_value(full_key, edited_full)
                         full_invalid = validate_placeholders(edited_full)
                         if full_invalid:
+                            icon = "⚠️" if full_invalid else "✅"
                             render_invalid_placeholder_assistant(
-                                field_label="Full T&Cs",
+                                field_label=f"{icon} Full T&Cs",
                                 text=edited_full,
                                 fix_buffer_key=full_fix_buffer,
                                 button_key=f"fix_{full_key}",

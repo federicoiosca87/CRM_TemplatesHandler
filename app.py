@@ -2324,6 +2324,36 @@ st.markdown("""
     .metric-invalid { border-color: rgba(239, 139, 134, 0.26); background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)); }
     .metric-session { border-color: rgba(125, 183, 255, 0.24); background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)); }
 
+    .st-key-mismatch_metric_card {
+        position: relative;
+    }
+
+    .st-key-mismatch_metric_card div[data-testid="stButton"] {
+        position: absolute;
+        inset: 0;
+        margin: 0;
+    }
+
+    .st-key-mismatch_metric_card div[data-testid="stButton"] button {
+        width: 100%;
+        height: 100%;
+        min-height: 100%;
+        border-radius: 16px;
+        border: 1px solid transparent;
+        background: transparent;
+        color: transparent;
+        padding: 0;
+    }
+
+    .st-key-mismatch_metric_card div[data-testid="stButton"] button:hover {
+        border-color: rgba(125, 183, 255, 0.2);
+        background: rgba(125, 183, 255, 0.04);
+    }
+
+    .st-key-mismatch_metric_card div[data-testid="stButton"] button p {
+        color: transparent;
+    }
+
     .chip-row {
         display: flex;
         flex-wrap: wrap;
@@ -2662,32 +2692,58 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
     resolved_count = len(resolved_events)
     mismatch_count = readiness.get("mismatch_count", 0)
     resolved_text = " | ".join(resolved_events[-2:]) if resolved_events else "No resolutions yet"
-    st.markdown(
-        (
-            "<div class='console-strip'>"
-            f"<div class='console-metric metric-ready'><div class='label'>Ready</div><div class='value'>{readiness['ready_count']}</div><div class='sub'>Languages cleared for export</div></div>"
-            f"<div class='console-metric metric-missing'><div class='label'>Missing</div><div class='value'>{readiness['missing_count']}</div><div class='sub'>Incomplete content blocks</div></div>"
-            f"<div class='console-metric metric-invalid'><div class='label'>Invalid</div><div class='value'>{readiness['invalid_count']}</div><div class='sub'>Placeholder issues still open</div></div>"
-            f"<div class='console-metric metric-missing'><div class='label'>Potential Wrong Language</div><div class='value'>{mismatch_count}</div><div class='sub'>Detected content-language mismatches</div></div>"
-            f"<div class='console-metric metric-session'><div class='label'>Resolved</div><div class='value'>{resolved_count}</div><div class='sub'>{html.escape(resolved_text)}</div></div>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
+    toggle_key = "qa_issue_actions_expanded"
+    if toggle_key not in st.session_state:
+        st.session_state[toggle_key] = False
+
+    cols = st.columns(5)
+
+    with cols[0]:
+        st.markdown(
+            f"<div class='console-metric metric-ready'><div class='label'>Ready</div><div class='value'>{readiness['ready_count']}</div><div class='sub'>Languages cleared for export</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with cols[1]:
+        st.markdown(
+            f"<div class='console-metric metric-missing'><div class='label'>Missing</div><div class='value'>{readiness['missing_count']}</div><div class='sub'>Incomplete content blocks</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with cols[2]:
+        st.markdown(
+            f"<div class='console-metric metric-invalid'><div class='label'>Invalid</div><div class='value'>{readiness['invalid_count']}</div><div class='sub'>Placeholder issues still open</div></div>",
+            unsafe_allow_html=True,
+        )
+
+    with cols[3]:
+        label_suffix = "click to hide" if st.session_state[toggle_key] else "click to show"
+        with st.container(key="mismatch_metric_card"):
+            st.markdown(
+                f"<div class='console-metric metric-missing'><div class='label'>Potential Wrong Language</div><div class='value'>{mismatch_count}</div><div class='sub'>Detected content-language mismatches ({label_suffix})</div></div>",
+                unsafe_allow_html=True,
+            )
+            if st.button(
+                "Toggle wrong-language issues",
+                key="qa_toggle_issue_actions_from_metric",
+                width="stretch",
+                type="secondary",
+                disabled=mismatch_count == 0,
+                help="Show or hide wrong-language issue buttons",
+            ):
+                st.session_state[toggle_key] = not st.session_state[toggle_key]
+                st.rerun()
+
+    with cols[4]:
+        st.markdown(
+            f"<div class='console-metric metric-session'><div class='label'>Resolved</div><div class='value'>{resolved_count}</div><div class='sub'>{html.escape(resolved_text)}</div></div>",
+            unsafe_allow_html=True,
+        )
 
 
 def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> None:
     """Render clickable issue chips for direct language navigation."""
     issue_buttons: list[tuple[str, str]] = []
-    mismatch_count = 0
-    other_issue_count = 0
-
-    def state_chip_label(lang: str, lang_name: str, state: str) -> str:
-        if state == "missing":
-            return f"⚠ {lang} {lang_name} (missing content)"
-        if state == "invalid":
-            return f"✖ {lang} {lang_name} (invalid placeholders)"
-        return f"⚠ {lang} {lang_name}"
 
     for doc in parsed_docs:
         lang = doc.language_code
@@ -2699,45 +2755,13 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
         if mismatch_info.get("detected"):
             detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
             issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
-            mismatch_count += 1
-        elif state == "missing":
-            issue_buttons.append((lang, state_chip_label(lang, lang_name, state)))
-            other_issue_count += 1
-        elif state == "invalid":
-            issue_buttons.append((lang, state_chip_label(lang, lang_name, state)))
-            other_issue_count += 1
 
     if not issue_buttons:
-        st.markdown("<div class='chip-row'><span class='issue-chip'>✓ No open QA issues</span></div>", unsafe_allow_html=True)
         return
 
     toggle_key = "qa_issue_actions_expanded"
     if toggle_key not in st.session_state:
         st.session_state[toggle_key] = False
-
-    mismatch_part = (
-        f"{mismatch_count} potential wrong language"
-        f"{'s' if mismatch_count != 1 else ''}"
-        if mismatch_count
-        else None
-    )
-    other_part = (
-        f"{other_issue_count} other QA issue"
-        f"{'s' if other_issue_count != 1 else ''}"
-        if other_issue_count
-        else None
-    )
-    summary_parts = [part for part in [mismatch_part, other_part] if part]
-    summary_label = " and ".join(summary_parts) if summary_parts else "QA issues"
-
-    toggle_label = (
-        f"Hide issue actions ({summary_label})"
-        if st.session_state[toggle_key]
-        else f"Show issue actions ({summary_label})"
-    )
-    if st.button(toggle_label, key="qa_toggle_issue_actions", width="stretch", type="secondary"):
-        st.session_state[toggle_key] = not st.session_state[toggle_key]
-        st.rerun()
 
     if not st.session_state[toggle_key]:
         return

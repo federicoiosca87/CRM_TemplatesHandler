@@ -2679,6 +2679,14 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
 def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> None:
     """Render clickable issue chips for direct language navigation."""
     issue_buttons: list[tuple[str, str]] = []
+
+    def state_chip_label(lang: str, lang_name: str, state: str) -> str:
+        if state == "missing":
+            return f"⚠ {lang} {lang_name} (missing content)"
+        if state == "invalid":
+            return f"✖ {lang} {lang_name} (invalid placeholders)"
+        return f"⚠ {lang} {lang_name}"
+
     for doc in parsed_docs:
         lang = doc.language_code
         lang_name = LANGUAGE_NAMES.get(lang, lang)
@@ -2690,9 +2698,9 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
             detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
             issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
         elif state == "missing":
-            issue_buttons.append((lang, f"⚠ {lang} {lang_name}"))
+            issue_buttons.append((lang, state_chip_label(lang, lang_name, state)))
         elif state == "invalid":
-            issue_buttons.append((lang, f"✖ {lang} {lang_name}"))
+            issue_buttons.append((lang, state_chip_label(lang, lang_name, state)))
 
     if not issue_buttons:
         st.markdown("<div class='chip-row'><span class='issue-chip'>✓ No open QA issues</span></div>", unsafe_allow_html=True)

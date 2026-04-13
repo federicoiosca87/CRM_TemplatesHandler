@@ -2679,6 +2679,8 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
 def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> None:
     """Render clickable issue chips for direct language navigation."""
     issue_buttons: list[tuple[str, str]] = []
+    mismatch_count = 0
+    other_issue_count = 0
 
     def state_chip_label(lang: str, lang_name: str, state: str) -> str:
         if state == "missing":
@@ -2697,13 +2699,47 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
         if mismatch_info.get("detected"):
             detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
             issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
+            mismatch_count += 1
         elif state == "missing":
             issue_buttons.append((lang, state_chip_label(lang, lang_name, state)))
+            other_issue_count += 1
         elif state == "invalid":
             issue_buttons.append((lang, state_chip_label(lang, lang_name, state)))
+            other_issue_count += 1
 
     if not issue_buttons:
         st.markdown("<div class='chip-row'><span class='issue-chip'>✓ No open QA issues</span></div>", unsafe_allow_html=True)
+        return
+
+    toggle_key = "qa_issue_actions_expanded"
+    if toggle_key not in st.session_state:
+        st.session_state[toggle_key] = False
+
+    mismatch_part = (
+        f"{mismatch_count} potential wrong language"
+        f"{'s' if mismatch_count != 1 else ''}"
+        if mismatch_count
+        else None
+    )
+    other_part = (
+        f"{other_issue_count} other QA issue"
+        f"{'s' if other_issue_count != 1 else ''}"
+        if other_issue_count
+        else None
+    )
+    summary_parts = [part for part in [mismatch_part, other_part] if part]
+    summary_label = " and ".join(summary_parts) if summary_parts else "QA issues"
+
+    toggle_label = (
+        f"Hide issue actions ({summary_label})"
+        if st.session_state[toggle_key]
+        else f"Show issue actions ({summary_label})"
+    )
+    if st.button(toggle_label, key="qa_toggle_issue_actions", width="stretch", type="secondary"):
+        st.session_state[toggle_key] = not st.session_state[toggle_key]
+        st.rerun()
+
+    if not st.session_state[toggle_key]:
         return
 
     st.markdown("<div class='chip-row'>", unsafe_allow_html=True)

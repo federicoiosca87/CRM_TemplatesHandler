@@ -2344,7 +2344,8 @@ st.markdown("""
     }
 
     /* Per-card gradient colors */
-    .st-key-metric_ready div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(100, 213, 150, 0.26) !important; cursor: pointer !important; }
+    .st-key-metric_ready div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(100, 213, 150, 0.26) !important; cursor: default !important; }
+    .st-key-metric_ready div[data-testid="stButton"] button:disabled { opacity: 1 !important; background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(100, 213, 150, 0.26) !important; }
     .st-key-metric_missing div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; cursor: pointer !important; }
     .st-key-metric_invalid div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(239, 139, 134, 0.26) !important; cursor: pointer !important; }
     .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; cursor: pointer !important; }
@@ -2364,8 +2365,13 @@ st.markdown("""
         width: 100% !important;
     }
 
+    /* Keep disabled card text fully visible */
+    .st-key-metric_ready div[data-testid="stButton"] button:disabled p {
+        color: var(--rc-text) !important;
+        opacity: 1 !important;
+    }
+
     /* Hover effect on clickable cards (interactive) */
-    .st-key-metric_ready div[data-testid="stButton"] button:hover,
     .st-key-metric_missing div[data-testid="stButton"] button:hover,
     .st-key-metric_invalid div[data-testid="stButton"] button:hover,
     .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button:hover {
@@ -2374,7 +2380,8 @@ st.markdown("""
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
     }
 
-    /* Suppress hover on static (read-only) card */
+    /* Suppress hover on static (read-only) cards */
+    .st-key-metric_ready div[data-testid="stButton"] button:hover,
     .st-key-metric_resolved div[data-testid="stButton"] button:hover {
         transform: none !important;
         box-shadow: none !important;
@@ -2757,14 +2764,13 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
     cols = st.columns(5)
 
     with cols[0]:
-        if st.button(
+        st.button(
             f"READY\n{readiness['ready_count']}",
             key="metric_ready",
             type="secondary",
             width="stretch",
-        ):
-            st.session_state[toggle_key] = "ready" if st.session_state[toggle_key] != "ready" else None
-            st.rerun()
+            disabled=True,
+        )
 
     with cols[1]:
         if st.button(

@@ -2630,13 +2630,15 @@ def render_issue_chips(readiness: dict, parsed_docs: list[ParsedDocument]) -> No
         lang_name = LANGUAGE_NAMES.get(lang, lang)
         state = readiness["by_language"][lang]["status"]
         mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
-        if state == "missing":
+        # Prioritize mismatch actions so every detected wrong-language case
+        # always gets its own direct navigation button.
+        if mismatch_info.get("detected"):
+            detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
+            issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
+        elif state == "missing":
             issue_buttons.append((lang, f"⚠ {lang} {lang_name}"))
         elif state == "invalid":
             issue_buttons.append((lang, f"✖ {lang} {lang_name}"))
-        elif mismatch_info.get("detected"):
-            detected_lang = (mismatch_info.get("detected_lang") or "?").upper()
-            issue_buttons.append((lang, f"🌐 {lang} {lang_name} (detected {detected_lang})"))
 
     if not issue_buttons:
         st.markdown("<div class='chip-row'><span class='issue-chip'>✓ No open QA issues</span></div>", unsafe_allow_html=True)

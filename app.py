@@ -2323,36 +2323,35 @@ st.markdown("""
     .metric-missing { border-color: rgba(244, 201, 107, 0.26); background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)); }
     .metric-invalid { border-color: rgba(239, 139, 134, 0.26); background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)); }
     .metric-session { border-color: rgba(125, 183, 255, 0.24); background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)); }
-    .metric-disabled { opacity: 0.62; filter: saturate(0.82); }
 
-    .st-key-mismatch_metric_card {
-        position: relative;
+    /* Mismatch metric tile rendered as a clickable card button */
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button {
+        width: 100% !important;
+        min-height: 90px !important;
+        background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important;
+        border: 1px solid rgba(244, 201, 107, 0.26) !important;
+        border-radius: 16px !important;
+        padding: 16px 18px !important;
+        text-align: left !important;
     }
 
-    .st-key-mismatch_metric_card div[data-testid="stButton"] {
-        position: absolute;
-        inset: 0;
-        margin: 0;
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button:hover:not([disabled]) {
+        border-color: rgba(244, 201, 107, 0.5) !important;
+        background: linear-gradient(180deg, rgba(244, 201, 107, 0.2), rgba(20,27,36,0.98)) !important;
     }
 
-    .st-key-mismatch_metric_card div[data-testid="stButton"] button {
-        width: 100%;
-        height: 100%;
-        min-height: 100%;
-        border-radius: 16px;
-        border: 1px solid transparent;
-        background: transparent;
-        color: transparent;
-        padding: 0;
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button p {
+        color: var(--rc-text) !important;
+        text-align: left !important;
+        white-space: pre-line !important;
+        margin: 0 !important;
+        line-height: 1.6 !important;
     }
 
-    .st-key-mismatch_metric_card div[data-testid="stButton"] button:hover {
-        border-color: rgba(125, 183, 255, 0.2);
-        background: rgba(125, 183, 255, 0.04);
-    }
-
-    .st-key-mismatch_metric_card div[data-testid="stButton"] button p {
-        color: transparent;
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button[disabled] {
+        opacity: 0.55 !important;
+        filter: saturate(0.7) !important;
+        cursor: default !important;
     }
 
     .chip-row {
@@ -2718,28 +2717,19 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
         )
 
     with cols[3]:
-        label_suffix = "click to hide" if st.session_state[toggle_key] else "click to show"
-        sub_label = "Detected content-language mismatches"
         if mismatch_count > 0:
-            sub_label = f"{sub_label} ({label_suffix})"
-        metric_class = "console-metric metric-missing"
-        if mismatch_count == 0:
-            metric_class = f"{metric_class} metric-disabled"
-        with st.container(key="mismatch_metric_card"):
-            st.markdown(
-                f"<div class='{metric_class}'><div class='label'>Potential Wrong Language</div><div class='value'>{mismatch_count}</div><div class='sub'>{sub_label}</div></div>",
-                unsafe_allow_html=True,
-            )
-            if st.button(
-                "Toggle wrong-language issues",
-                key="qa_toggle_issue_actions_from_metric",
-                width="stretch",
-                type="secondary",
-                disabled=mismatch_count == 0,
-                help="Show or hide wrong-language issue buttons",
-            ):
-                st.session_state[toggle_key] = not st.session_state[toggle_key]
-                st.rerun()
+            click_hint = "click to hide" if st.session_state[toggle_key] else "click to show"
+            tile_label = f"POTENTIAL WRONG LANGUAGE\n{mismatch_count}\nDetected content-language mismatches ({click_hint})"
+        else:
+            tile_label = "POTENTIAL WRONG LANGUAGE\n0\nDetected content-language mismatches"
+        if st.button(
+            tile_label,
+            key="qa_toggle_issue_actions_from_metric",
+            type="secondary",
+            disabled=mismatch_count == 0,
+        ):
+            st.session_state[toggle_key] = not st.session_state[toggle_key]
+            st.rerun()
 
     with cols[4]:
         st.markdown(

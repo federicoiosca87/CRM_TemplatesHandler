@@ -70,6 +70,11 @@ class AuditReport:
         markets: List[str],
         user_notes: str = "",
         content_edits: Optional[List[Dict[str, str]]] = None,
+        task_type: str = "",
+        reward_type: str = "",
+        send_conditions: Optional[List[str]] = None,
+        variants: Optional[List[str]] = None,
+        language_count: int = 0,
     ):
         self.document_name = document_name
         self.upload_timestamp = upload_timestamp
@@ -80,6 +85,11 @@ class AuditReport:
         self.markets = markets
         self.user_notes = user_notes
         self.content_edits = content_edits or []
+        self.task_type = task_type
+        self.reward_type = reward_type
+        self.send_conditions = send_conditions or []
+        self.variants = variants or []
+        self.language_count = language_count
         
         self.language_statuses: Dict[str, LanguageStatus] = {}
         self.file_manifest: List[FileManifestEntry] = []
@@ -162,6 +172,23 @@ class AuditReport:
         
         return "\n".join(lines)
     
+    def get_offer_configuration(self) -> str:
+        """Generate offer configuration summary section."""
+        task_reward = f"{self.task_type} / {self.reward_type}" if self.task_type else self.offer_type
+        lines = [
+            "## Offer Configuration",
+            "",
+            "| Parameter | Value |",
+            "|-----------|-------|",
+            f"| **Offer Key** | {self.offer_type} |",
+            f"| **Task / Reward** | {task_reward} |",
+            f"| **Send Conditions** | {', '.join(self.send_conditions) if self.send_conditions else 'N/A'} |",
+            f"| **Variants** | {', '.join(self.variants) if self.variants else 'N/A'} |",
+            f"| **Languages** | {self.language_count} |",
+            f"| **Markets** | {', '.join(self.markets) if self.markets else 'N/A'} |",
+        ]
+        return "\n".join(lines)
+
     def get_session_metadata(self) -> str:
         """Generate session metadata section."""
         lines = [
@@ -376,6 +403,8 @@ class AuditReport:
             "",
             self.get_session_metadata(),
             "",
+            self.get_offer_configuration(),
+            "",
             self.get_completeness_matrix(),
             "",
             self.get_export_manifest(),
@@ -424,6 +453,7 @@ class AuditReport:
             "</head><body>",
             "<h1>CMS Template Generator – Audit Report</h1>",
             self._html_session_metadata(),
+            self._html_offer_configuration(),
             self._html_completeness_matrix(),
             self._html_export_manifest(),
             self._html_fixes_summary(),
@@ -454,6 +484,22 @@ class AuditReport:
 
         if self.user_notes:
             lines.append(f"<p><strong>User Notes:</strong></p><pre>{html.escape(self.user_notes)}</pre>")
+        return "\n".join(lines)
+
+    def _html_offer_configuration(self) -> str:
+        task_reward = f"{html.escape(self.task_type)} / {html.escape(self.reward_type)}" if self.task_type else html.escape(self.offer_type)
+        rows = [
+            ("Offer Key", html.escape(self.offer_type)),
+            ("Task / Reward", task_reward),
+            ("Send Conditions", html.escape(", ".join(self.send_conditions)) if self.send_conditions else "N/A"),
+            ("Variants", html.escape(", ".join(self.variants)) if self.variants else "N/A"),
+            ("Languages", str(self.language_count)),
+            ("Markets", html.escape(", ".join(self.markets)) if self.markets else "N/A"),
+        ]
+        lines = ["<h2>Offer Configuration</h2>", "<table>"]
+        for label, value in rows:
+            lines.append(f"<tr><td><strong>{label}</strong></td><td>{value}</td></tr>")
+        lines.append("</table>")
         return "\n".join(lines)
 
     def _html_completeness_matrix(self) -> str:
@@ -628,6 +674,10 @@ def build_report_from_session(
     markets: Optional[List[str]] = None,
     user_notes: str = "",
     content_edits: Optional[List[Dict[str, str]]] = None,
+    task_type: str = "",
+    reward_type: str = "",
+    send_conditions: Optional[List[str]] = None,
+    variants: Optional[List[str]] = None,
 ) -> AuditReport:
     """
     Build complete audit report from session state.
@@ -657,6 +707,11 @@ def build_report_from_session(
         markets=markets or [],
         user_notes=user_notes,
         content_edits=content_edits,
+        task_type=task_type,
+        reward_type=reward_type,
+        send_conditions=send_conditions,
+        variants=variants,
+        language_count=len(parsed_docs),
     )
     
     # Build language completeness matrix

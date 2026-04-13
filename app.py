@@ -3798,19 +3798,26 @@ def main():
             
             st.divider()
             
-            # Audit Report Metadata
-            st.subheader("📊 Audit Report Context")
-            st.caption("Offer type and markets are auto-detected. Report notes are managed in Offer Configuration.")
-            
+            # Audit Report Metadata — styled to match the rest of the export tab
             audit_offer_type = st.session_state.get("offer_key", "Not set")
-            st.markdown(f"**Offer Type:** `{audit_offer_type}`")
             st.session_state["audit_offer_type"] = audit_offer_type
-            
-            # Auto-detect markets from uploaded languages
             detected_markets = detect_markets_from_languages(parsed_docs)
             st.session_state["audit_markets"] = detected_markets
-            
-            st.markdown(f"**Markets Included:** {', '.join(detected_markets) if detected_markets else 'None detected'}")
+
+            st.markdown(
+                (
+                    "<div class='console-panel'>"
+                    "<span class='section-kicker'>AUDIT CONTEXT</span>"
+                    "<h3 style='margin:0 0 4px 0;font-size:1.1rem;color:var(--rc-text);'>Report Metadata</h3>"
+                    "<p style='margin:0 0 12px 0;color:var(--rc-muted);font-size:0.82rem;'>Offer type and markets are auto-detected. Notes are included in the downloaded report.</p>"
+                    "<div class='panel-grid' style='grid-template-columns:1fr 1fr;'>"
+                    f"<div class='mini-panel'><p><strong>Offer Type</strong><br><code>{html.escape(str(audit_offer_type))}</code></p></div>"
+                    f"<div class='mini-panel'><p><strong>Markets</strong><br>{html.escape(', '.join(detected_markets)) if detected_markets else '<em>None detected</em>'}</p></div>"
+                    "</div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
 
             audit_notes = st.text_area(
                 "Report Notes",
@@ -3818,6 +3825,7 @@ def main():
                 height=100,
                 placeholder="Optional: Context for this export, approvals, caveats, or rollout notes.",
                 key="audit_notes_context",
+                label_visibility="collapsed",
             )
             st.session_state["audit_notes"] = audit_notes
             
@@ -3948,6 +3956,10 @@ def main():
                             markets=st.session_state.get("audit_markets", []),
                             user_notes=st.session_state.get("audit_notes", ""),
                             content_edits=filtered_content_edits,
+                            task_type=st.session_state.get("task_type", ""),
+                            reward_type=st.session_state.get("reward_type", ""),
+                            send_conditions=st.session_state.get("send_conditions", []),
+                            variants=st.session_state.get("variants", []),
                         )
                         
                         report_markdown = audit_report.generate_markdown_report()

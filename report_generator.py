@@ -389,6 +389,230 @@ class AuditReport:
         
         return "\n".join(sections)
 
+    # ------------------------------------------------------------------
+    # HTML report (Confluence-pasteable)
+    # ------------------------------------------------------------------
+
+    def generate_html_report(self) -> str:
+        """Generate a self-contained HTML report that can be pasted into Confluence."""
+
+        css = (
+            "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;"
+            "color:#172b4d;max-width:960px;margin:2em auto;padding:0 1em;line-height:1.6}"
+            "h1{border-bottom:2px solid #0052cc;padding-bottom:.3em}"
+            "h2{margin-top:1.8em;border-bottom:1px solid #dfe1e6;padding-bottom:.25em}"
+            "h3,h4{margin-top:1.2em}"
+            "table{border-collapse:collapse;width:100%;margin:1em 0}"
+            "th,td{border:1px solid #dfe1e6;padding:8px 12px;text-align:left}"
+            "th{background:#f4f5f7;font-weight:600}"
+            "tr:nth-child(even){background:#fafbfc}"
+            "code{background:#f4f5f7;padding:2px 4px;border-radius:3px;font-size:0.9em}"
+            "pre{background:#f4f5f7;padding:12px;border-radius:3px;overflow-x:auto}"
+            ".status-ready{color:#006644;font-weight:600}"
+            ".status-blocked{color:#de350b;font-weight:600}"
+            ".status-partial{color:#ff8b00;font-weight:600}"
+            ".diff-highlight{background:#ffefbf;color:#6f5607;border:1px dashed #d8b45a;"
+            "border-radius:4px;padding:0 3px}"
+            "strong{font-weight:600}"
+        )
+
+        parts: list[str] = [
+            "<!DOCTYPE html>",
+            "<html><head><meta charset='utf-8'>",
+            f"<title>Audit Report – {html.escape(self.offer_type)}</title>",
+            f"<style>{css}</style>",
+            "</head><body>",
+            "<h1>CMS Template Generator – Audit Report</h1>",
+            self._html_session_metadata(),
+            self._html_completeness_matrix(),
+            self._html_export_manifest(),
+            self._html_fixes_summary(),
+            self._html_content_edit_log(),
+            self._html_validation_summary(),
+            "</body></html>",
+        ]
+        return "\n".join(parts)
+
+    # --- private HTML helpers ---
+
+    def _html_session_metadata(self) -> str:
+        rows = [
+            ("Document", html.escape(self.document_name)),
+            ("Upload Time", self.upload_timestamp.strftime("%Y-%m-%d %H:%M:%S")),
+            ("Completion Time", self.end_timestamp.strftime("%Y-%m-%d %H:%M:%S")),
+            ("Duration", f"{int(self.duration_seconds // 60)}m {int(self.duration_seconds % 60)}s"),
+            ("Offer Type", html.escape(self.offer_type)),
+            ("Markets Included", html.escape(", ".join(self.markets)) if self.markets else "N/A"),
+        ]
+        if self.template_version:
+            rows.insert(-1, ("Template Version", html.escape(self.template_version)))
+
+        lines = ["<h2>Session Metadata</h2>", "<table>"]
+        for label, value in rows:
+            lines.append(f"<tr><td><strong>{label}</strong></td><td>{value}</td></tr>")
+        lines.append("</table>")
+
+        if self.user_notes:
+            lines.append(f"<p><strong>User Notes:</strong></p><pre>{html.escape(self.user_notes)}</pre>")
+        return "\n".join(lines)
+
+    def _html_completeness_matrix(self) -> str:
+        lines = [
+            "<h2>Language Completeness Matrix</h2>",
+            "<table>",
+            "<tr><th>Language</th><th>Missing</th><th>Invalid</th><th>Fixed</th><th>Readiness</th><th>Status</th></tr>",
+        ]
+        for lang_code in sorted(self.language_statuses.keys()):
+            s = self.language_statuses[lang_code]
+            if "Ready" in s.status:
+                cls = "status-ready"
+            elif "Blocked" in s.status:
+                cls = "status-blocked"
+            else:
+                cls = "status-partial"
+            lines.append(
+                f"<tr><td>{html.escape(s.language_name)} ({html.escape(lang_code)})</td>"
+                f"<td>{s.missing_issues}</td><td>{s.invalid_issues}</td>"
+                f"<td>{s.fixed_count}</td><td>{s.readiness_pct}%</td>"
+                f"<td class='{cls}'>{html.escape(s.status)}</td></tr>"
+            )
+        lines.append("</table>")
+        return "\n".join(lines)
+
+    def _html_export_manifest(self) -> str:
+        lines = [
+            "<h2>Export Manifest</h2>",
+            "<table>",
+            "<tr><th>File</th><th>Type</th><th>Size</th></tr>",
+        ]
+        sms = oms = tc = 0
+        total = 0
+        for entry in sorted(self.file_manifest, key=lambda x: x.content_type):
+            size_kb = entry.size_bytes / 1024
+            lines.append(
+                f"<tr><td>{html.escape(entry.filename)}</td>"
+                f"<td>{html.escape(entry.content_type)}</td>"
+                f"<td>{size_kb:.1f} KB</td></tr>"
+            )
+            if entry.content_type == "SMS":
+                sms += 1
+            elif entry.content_type == "OMS":
+                oms += 1
+            elif entry.content_type == "TC":
+                tc += 1
+            total += entry.size_bytes
+        lines.append("</table>")
+        lines.append(f"<p><strong>Breakdown:</strong> SMS: {sms} | OMS: {oms} | TC: {tc}<br>")
+        lines.append(f"<strong>Total Size:</strong> {total / 1024:.1f} KB</p>")
+        return "\n".join(lines)
+
+    def _html_fixes_summary(self) -> str:
+        has_auto = bool(self.fixes_applied)
+        manual_fix_rows = [
+            e for e in self.content_edits
+            if e.get("resolved_invalid_placeholders", 0) > 0 or e.get("placeholder_token_delta", 0) > 0
+        ]
+
+        if not has_auto and not manual_fix_rows:
+            note = "No placeholder fixes detected in this session."
+            if self.content_edits:
+                note += f" {len(self.content_edits)} content edit(s) were captured in the Content Edit Log."
+            return f"<h2>Fixes Applied</h2><p>{note}</p>"
+
+        lines = ["<h2>Fixes Applied</h2>"]
+
+        if has_auto:
+            lines.append("<h3>Auto-fixes (Fix safe actions)</h3>")
+            for lang in sorted(self.fixes_applied.keys()):
+                fields = self.fixes_applied[lang]
+                total = sum(fields.values())
+                lines.append(f"<h4>{html.escape(lang)}</h4><ul>")
+                for field, count in sorted(fields.items()):
+                    details = self.fix_details.get(lang, {}).get(field, [])
+                    if details:
+                        detail_text = ", ".join(details[:3])
+                        if len(details) > 3:
+                            detail_text += f" (+{len(details) - 3} more)"
+                        lines.append(f"<li>{html.escape(field)}: {count} placeholder{'s' if count != 1 else ''} fixed ({html.escape(detail_text)})</li>")
+                    else:
+                        lines.append(f"<li>{html.escape(field)}: {count} placeholder{'s' if count != 1 else ''}</li>")
+                lines.append(f"</ul><p><strong>Auto-fix total:</strong> {total} placeholder{'s' if total != 1 else ''}</p>")
+
+        if manual_fix_rows:
+            lines.append("<h3>Manual corrections</h3><ul>")
+            manual_totals: Dict[str, int] = {}
+            manual_token_totals: Dict[str, int] = {}
+            for row in manual_fix_rows:
+                lang = row.get("language", "Unknown")
+                manual_totals[lang] = manual_totals.get(lang, 0) + int(row.get("resolved_invalid_placeholders", 0))
+                manual_token_totals[lang] = manual_token_totals.get(lang, 0) + int(row.get("placeholder_token_delta", 0))
+            for lang in sorted(manual_totals.keys()):
+                inv = manual_totals[lang]
+                tok = manual_token_totals.get(lang, 0)
+                lines.append(
+                    f"<li>{html.escape(lang)}: {inv} invalid placeholder{'s' if inv != 1 else ''} resolved, "
+                    f"{tok} placeholder token change{'s' if tok != 1 else ''} from manual edits</li>"
+                )
+            lines.append("</ul>")
+
+        return "\n".join(lines)
+
+    def _html_content_edit_log(self) -> str:
+        if not self.content_edits:
+            return "<h2>Content Edit Log</h2><p>No manual content edits were detected in this session.</p>"
+
+        def tokenize(text: str) -> list[str]:
+            return re.findall(r"\S+|\s+", text or "")
+
+        def clip(text: str, max_len: int = 220) -> str:
+            return text if len(text) <= max_len else text[:max_len - 3] + "..."
+
+        def render_pair(before_text: str, after_text: str) -> tuple[str, str]:
+            before_tokens = tokenize(before_text)
+            after_tokens = tokenize(after_text)
+            matcher = difflib.SequenceMatcher(a=before_tokens, b=after_tokens)
+            before_chunks: list[str] = []
+            after_chunks: list[str] = []
+            for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+                a_chunk = "".join(before_tokens[i1:i2])
+                b_chunk = "".join(after_tokens[j1:j2])
+                if tag == "equal":
+                    before_chunks.append(html.escape(a_chunk))
+                    after_chunks.append(html.escape(b_chunk))
+                elif tag in {"replace", "delete"} and a_chunk:
+                    before_chunks.append(f"<span class='diff-highlight'>{html.escape(a_chunk)}</span>")
+                if tag in {"replace", "insert"} and b_chunk:
+                    after_chunks.append(f"<span class='diff-highlight'>{html.escape(b_chunk)}</span>")
+            return clip("".join(before_chunks).replace("\n", "<br>")), clip("".join(after_chunks).replace("\n", "<br>"))
+
+        lines = [
+            "<h2>Content Edit Log</h2>",
+            "<table>",
+            "<tr><th>Language</th><th>Field</th><th>Before</th><th>After</th></tr>",
+        ]
+        for edit in self.content_edits:
+            before_html, after_html = render_pair(edit.get("before", "") or "", edit.get("after", "") or "")
+            lines.append(
+                f"<tr><td>{html.escape(edit.get('language', ''))}</td>"
+                f"<td>{html.escape(edit.get('field', ''))}</td>"
+                f"<td>{before_html}</td><td>{after_html}</td></tr>"
+            )
+        lines.append("</table>")
+        lines.append(f"<p><strong>Total edited fields:</strong> {len(self.content_edits)}</p>")
+        return "\n".join(lines)
+
+    def _html_validation_summary(self) -> str:
+        if not self.validation_violations:
+            return "<h2>Validation Rules</h2><p>All placeholders comply with brand validation rules.</p>"
+        lines = [
+            "<h2>Validation Violations</h2>",
+            f"<p>Found {len(self.validation_violations)} violation(s):</p><ul>",
+        ]
+        for v in self.validation_violations:
+            lines.append(f"<li>{html.escape(v)}</li>")
+        lines.append("</ul>")
+        return "\n".join(lines)
+
 
 def build_report_from_session(
     document_name: str,

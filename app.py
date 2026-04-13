@@ -3957,15 +3957,27 @@ def main():
                             st.markdown(report_markdown, unsafe_allow_html=True)
                         
                         # Download button for report
-                        report_filename = f"AuditReport_{st.session_state.get('offer_key', 'Unknown')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-                        st.download_button(
-                            label="📥 Download Audit Report (Markdown)",
-                            data=report_markdown.encode(),
-                            file_name=report_filename,
-                            mime="text/markdown",
-                            width="stretch",
-                            help="Complete audit trail including metadata, language completeness, fixes applied, and file manifest",
-                        )
+                        report_filename = f"AuditReport_{st.session_state.get('offer_key', 'Unknown')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        dl_col1, dl_col2 = st.columns(2)
+                        with dl_col1:
+                            report_html = audit_report.generate_html_report()
+                            st.download_button(
+                                label="📥 Download Audit Report (Confluence)",
+                                data=report_html.encode(),
+                                file_name=f"{report_filename}.html",
+                                mime="text/html",
+                                width="stretch",
+                                help="HTML format — open in browser, Ctrl+A, Ctrl+C, paste into Confluence",
+                            )
+                        with dl_col2:
+                            st.download_button(
+                                label="📥 Download Audit Report (Markdown)",
+                                data=report_markdown.encode(),
+                                file_name=f"{report_filename}.md",
+                                mime="text/markdown",
+                                width="stretch",
+                                help="Raw Markdown for Git, docs, or local reference",
+                            )
                         
                         st.divider()
                         

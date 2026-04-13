@@ -2335,17 +2335,17 @@ st.markdown("""
         border-radius: 16px !important;
         padding: 16px 18px !important;
         text-align: left !important;
-        cursor: default !important;
         transform: none !important;
         box-shadow: none !important;
+        transition: all 0.2s ease-in-out !important;
     }
 
     /* Per-card gradient colors */
-    .st-key-metric_ready div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(100, 213, 150, 0.26) !important; }
-    .st-key-metric_missing div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; }
-    .st-key-metric_invalid div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(239, 139, 134, 0.26) !important; }
-    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; }
-    .st-key-metric_resolved div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(125, 183, 255, 0.24) !important; }
+    .st-key-metric_ready div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(100, 213, 150, 0.26) !important; cursor: pointer !important; }
+    .st-key-metric_missing div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; cursor: pointer !important; }
+    .st-key-metric_invalid div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(239, 139, 134, 0.26) !important; cursor: pointer !important; }
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; cursor: pointer !important; }
+    .st-key-metric_resolved div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(125, 183, 255, 0.24) !important; cursor: default !important; }
 
     /* Text styling for all metric cards */
     .st-key-metric_ready div[data-testid="stButton"] button p,
@@ -2360,14 +2360,22 @@ st.markdown("""
         line-height: 1.6 !important;
     }
 
-    /* Suppress hover lift on static (non-interactive) cards */
+    /* Hover effect on clickable cards (interactive) */
     .st-key-metric_ready div[data-testid="stButton"] button:hover,
     .st-key-metric_missing div[data-testid="stButton"] button:hover,
     .st-key-metric_invalid div[data-testid="stButton"] button:hover,
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button:hover {
+        filter: brightness(1.15) !important;
+        transform: none !important;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+    }
+
+    /* Suppress hover on static (read-only) card */
     .st-key-metric_resolved div[data-testid="stButton"] button:hover {
         transform: none !important;
         box-shadow: none !important;
-    }
+        filter: none !important;
+    
 
     /* Hover on the clickable mismatch card */
     .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button:hover:not([disabled]) {

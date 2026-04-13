@@ -2324,23 +2324,35 @@ st.markdown("""
     .metric-invalid { border-color: rgba(239, 139, 134, 0.26); background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)); }
     .metric-session { border-color: rgba(125, 183, 255, 0.24); background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)); }
 
-    /* Mismatch metric tile rendered as a clickable card button */
-    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button {
+    /* Metric card buttons — all 5 tiles use the same card shape */
+    .st-key-metric_ready div[data-testid="stButton"] button,
+    .st-key-metric_missing div[data-testid="stButton"] button,
+    .st-key-metric_invalid div[data-testid="stButton"] button,
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button,
+    .st-key-metric_resolved div[data-testid="stButton"] button {
         width: 100% !important;
         min-height: 90px !important;
-        background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important;
-        border: 1px solid rgba(244, 201, 107, 0.26) !important;
         border-radius: 16px !important;
         padding: 16px 18px !important;
         text-align: left !important;
+        cursor: default !important;
+        transform: none !important;
+        box-shadow: none !important;
     }
 
-    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button:hover:not([disabled]) {
-        border-color: rgba(244, 201, 107, 0.5) !important;
-        background: linear-gradient(180deg, rgba(244, 201, 107, 0.2), rgba(20,27,36,0.98)) !important;
-    }
+    /* Per-card gradient colors */
+    .st-key-metric_ready div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-green-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(100, 213, 150, 0.26) !important; }
+    .st-key-metric_missing div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; }
+    .st-key-metric_invalid div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(239, 139, 134, 0.26) !important; }
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(244, 201, 107, 0.26) !important; }
+    .st-key-metric_resolved div[data-testid="stButton"] button { background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)) !important; border: 1px solid rgba(125, 183, 255, 0.24) !important; }
 
-    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button p {
+    /* Text styling for all metric cards */
+    .st-key-metric_ready div[data-testid="stButton"] button p,
+    .st-key-metric_missing div[data-testid="stButton"] button p,
+    .st-key-metric_invalid div[data-testid="stButton"] button p,
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button p,
+    .st-key-metric_resolved div[data-testid="stButton"] button p {
         color: var(--rc-text) !important;
         text-align: left !important;
         white-space: pre-line !important;
@@ -2348,6 +2360,24 @@ st.markdown("""
         line-height: 1.6 !important;
     }
 
+    /* Suppress hover lift on static (non-interactive) cards */
+    .st-key-metric_ready div[data-testid="stButton"] button:hover,
+    .st-key-metric_missing div[data-testid="stButton"] button:hover,
+    .st-key-metric_invalid div[data-testid="stButton"] button:hover,
+    .st-key-metric_resolved div[data-testid="stButton"] button:hover {
+        transform: none !important;
+        box-shadow: none !important;
+    }
+
+    /* Hover on the clickable mismatch card */
+    .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button:hover:not([disabled]) {
+        cursor: pointer !important;
+        border-color: rgba(244, 201, 107, 0.5) !important;
+        background: linear-gradient(180deg, rgba(244, 201, 107, 0.2), rgba(20,27,36,0.98)) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* Mismatch card disabled state */
     .st-key-qa_toggle_issue_actions_from_metric div[data-testid="stButton"] button[disabled] {
         opacity: 0.55 !important;
         filter: saturate(0.7) !important;
@@ -2699,29 +2729,28 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
     cols = st.columns(5)
 
     with cols[0]:
-        st.markdown(
-            f"<div class='console-metric metric-ready'><div class='label'>Ready</div><div class='value'>{readiness['ready_count']}</div><div class='sub'>Languages cleared for export</div></div>",
-            unsafe_allow_html=True,
+        st.button(
+            f"READY\n{readiness['ready_count']}\nLanguages cleared for export",
+            key="metric_ready",
+            type="secondary",
         )
 
     with cols[1]:
-        st.markdown(
-            f"<div class='console-metric metric-missing'><div class='label'>Missing</div><div class='value'>{readiness['missing_count']}</div><div class='sub'>Incomplete content blocks</div></div>",
-            unsafe_allow_html=True,
+        st.button(
+            f"MISSING\n{readiness['missing_count']}\nIncomplete content blocks",
+            key="metric_missing",
+            type="secondary",
         )
 
     with cols[2]:
-        st.markdown(
-            f"<div class='console-metric metric-invalid'><div class='label'>Invalid</div><div class='value'>{readiness['invalid_count']}</div><div class='sub'>Placeholder issues still open</div></div>",
-            unsafe_allow_html=True,
+        st.button(
+            f"INVALID\n{readiness['invalid_count']}\nPlaceholder issues still open",
+            key="metric_invalid",
+            type="secondary",
         )
 
     with cols[3]:
-        if mismatch_count > 0:
-            click_hint = "click to hide" if st.session_state[toggle_key] else "click to show"
-            tile_label = f"POTENTIAL WRONG LANGUAGE\n{mismatch_count}\nDetected content-language mismatches ({click_hint})"
-        else:
-            tile_label = "POTENTIAL WRONG LANGUAGE\n0\nDetected content-language mismatches"
+        tile_label = f"POTENTIAL WRONG LANGUAGE\n{mismatch_count}\nDetected content-language mismatches"
         if st.button(
             tile_label,
             key="qa_toggle_issue_actions_from_metric",
@@ -2732,9 +2761,10 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
             st.rerun()
 
     with cols[4]:
-        st.markdown(
-            f"<div class='console-metric metric-session'><div class='label'>Resolved</div><div class='value'>{resolved_count}</div><div class='sub'>{html.escape(resolved_text)}</div></div>",
-            unsafe_allow_html=True,
+        st.button(
+            f"RESOLVED\n{resolved_count}\n{resolved_text}",
+            key="metric_resolved",
+            type="secondary",
         )
 
 

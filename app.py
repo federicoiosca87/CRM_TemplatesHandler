@@ -2323,6 +2323,7 @@ st.markdown("""
     .metric-missing { border-color: rgba(244, 201, 107, 0.26); background: linear-gradient(180deg, var(--rc-amber-bg), rgba(20,27,36,0.98)); }
     .metric-invalid { border-color: rgba(239, 139, 134, 0.26); background: linear-gradient(180deg, var(--rc-red-bg), rgba(20,27,36,0.98)); }
     .metric-session { border-color: rgba(125, 183, 255, 0.24); background: linear-gradient(180deg, var(--rc-blue-bg), rgba(20,27,36,0.98)); }
+    .metric-disabled { opacity: 0.62; filter: saturate(0.82); }
 
     .st-key-mismatch_metric_card {
         position: relative;
@@ -2718,9 +2719,15 @@ def render_console_metrics(readiness: dict, resolved_events: list[str]) -> None:
 
     with cols[3]:
         label_suffix = "click to hide" if st.session_state[toggle_key] else "click to show"
+        sub_label = "Detected content-language mismatches"
+        if mismatch_count > 0:
+            sub_label = f"{sub_label} ({label_suffix})"
+        metric_class = "console-metric metric-missing"
+        if mismatch_count == 0:
+            metric_class = f"{metric_class} metric-disabled"
         with st.container(key="mismatch_metric_card"):
             st.markdown(
-                f"<div class='console-metric metric-missing'><div class='label'>Potential Wrong Language</div><div class='value'>{mismatch_count}</div><div class='sub'>Detected content-language mismatches ({label_suffix})</div></div>",
+                f"<div class='{metric_class}'><div class='label'>Potential Wrong Language</div><div class='value'>{mismatch_count}</div><div class='sub'>{sub_label}</div></div>",
                 unsafe_allow_html=True,
             )
             if st.button(

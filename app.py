@@ -3227,11 +3227,15 @@ def main():
 
                 # Auto-apply detection results immediately (no button needed)
                 if auto_task or auto_reward or auto_image:
-                    # Check if these are new values that need a rerun
+                    # Rerun when detection changed OR current sidebar values are out of sync.
+                    # This ensures auto-detection actually updates visible selections.
                     needs_rerun = (
                         (auto_task and st.session_state.get("detected_task_type") != auto_task) or
                         (auto_reward and st.session_state.get("detected_reward_type") != auto_reward) or
-                        (auto_image and st.session_state.get("detected_image") != auto_image)
+                        (auto_image and st.session_state.get("detected_image") != auto_image) or
+                        (auto_task and st.session_state.get("task_type_select") != auto_task) or
+                        (auto_reward and st.session_state.get("reward_type_select") != auto_reward) or
+                        (auto_image and st.session_state.get("image_select") != auto_image)
                     )
 
                     # Set detected values in session state

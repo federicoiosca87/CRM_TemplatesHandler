@@ -77,6 +77,20 @@ LANGUAGE_NAMES = {
     "PE_EN": "English (Peru)",
     "ET_ET": "Estonian (Estonia)",
     "ET_RU": "Russian (Estonia)",
+    # Additional codes from folder names
+    "AR": "Spanish (Argentina)",
+    "PT": "Portuguese",
+    "BT-PT": "Portuguese (Portugal)",
+    "BT-BR": "Portuguese (Brazil)",
+    "BT-ES": "Spanish (Spain)",
+    "BT-IT": "Italian",
+    "BT-FI": "Finnish",
+    "BT-NO": "Norwegian",
+    "BT-DK": "Danish",
+    "BT-PL": "Polish",
+    "BT-LV": "Latvian",
+    "BT-EE": "Estonian",
+    "BT-GR": "Greek",
 }
 
 # Language to Market mapping for audit report

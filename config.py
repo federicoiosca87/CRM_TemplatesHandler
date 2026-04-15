@@ -33,6 +33,12 @@ LANGUAGE_MAPPING = {
     "RU_LV": ["ru-lv"],
     "TR": ["tr"],
     "CA": ["en-ca"],
+    "COL": ["co"],           # Colombia (alternate code)
+    "DK": ["da"],            # Denmark -> Danish
+    "ARG_PY": ["py"],        # Argentina+Paraguay shared -> Paraguay CMS code
+    "PE_EN": ["en-pe"],      # English for Peru
+    "ET_ET": ["et"],         # Estonian for Estonia
+    "ET_RU": ["ru-ee"],      # Russian for Estonia
 }
 
 # Human-readable language names for display
@@ -65,6 +71,12 @@ LANGUAGE_NAMES = {
     "RU_LV": "Russian (Latvia)",
     "TR": "Turkish",
     "CA": "English (Canada)",
+    "COL": "Spanish (Colombia)",
+    "DK": "Danish",
+    "ARG_PY": "Spanish (Argentina/Paraguay)",
+    "PE_EN": "English (Peru)",
+    "ET_ET": "Estonian (Estonia)",
+    "ET_RU": "Russian (Estonia)",
 }
 
 # Language to Market mapping for audit report
@@ -98,6 +110,12 @@ LANGUAGE_TO_MARKET = {
     "RU_LV": "Latvia",
     "TR": "Turkey",
     "CA": "Canada",
+    "COL": "Colombia",
+    "DK": "Denmark",
+    "ARG_PY": "Paraguay",
+    "PE_EN": "Peru",
+    "ET_ET": "Estonia",
+    "ET_RU": "Estonia",
 }
 
 # Template types and their content fields
@@ -154,7 +172,7 @@ TEMPLATE_TYPES = {
 SECTION_MARKERS = {
     "MY_OFFERS": ["MY OFFERS", "MYOFFERS"],
     "LAUNCH_OMS": ["LAUNCH OMS", "LAUNCH"],
-    "REMINDER_OMS": ["REMINDER OMS", "REMINDER"],
+    "REMINDER_OMS": ["REMINDER OMS", "OMS REMINDER", "REMINDER"],
     "REWARD_OMS": [
         # English
         "REWARD RECEIVED", "REWARD RECEIVED OMS", "REWARD OMS",
@@ -187,6 +205,8 @@ SECTION_MARKERS = {
     ],
     "LAUNCH_SMS": [
         "LAUNCH SMS", "SMS LAUNCH",
+        "SMS - LAUNCH",  # BR dash format
+        "СМС LAUNCH", "LAUNCH СМС",  # Russian Cyrillic
         # Greek
         "SMS ΕΚΚΙΝΗΣΗΣ", "SMS ΑΠΟΣΤΟΛΗΣ", "ΑΡΧΙΚΟ SMS",
         # Spanish
@@ -199,9 +219,13 @@ SECTION_MARKERS = {
         "SMS DI LANCIO",
         # French
         "SMS DE LANCEMENT",
+        # Estonian
+        "LANSSEERIMINE",
     ],
     "REMINDER_SMS": [
         "REMINDER SMS", "SMS REMINDER",
+        "SMS - REMINDER",  # BR dash format
+        "СМС REMINDER", "REMINDER СМС",  # Russian Cyrillic
         # Greek
         "SMS ΥΠΕΝΘΥΜΙΣΗΣ", "ΥΠΕΝΘΥΜΙΣΤΙΚΟ SMS",
         # Spanish
@@ -214,6 +238,8 @@ SECTION_MARKERS = {
         "SMS DI PROMEMORIA",
         # French
         "SMS DE RAPPEL",
+        # Estonian
+        "MEELDETULETUS",
     ],
     "SMS": [
         "SMS", "SMS TEMPLATES", "LAUNCH SMS", "REMINDER SMS",
@@ -224,7 +250,8 @@ SECTION_MARKERS = {
     ],
     "TC": [
         # English
-        "T&C", "T&CS", "TERMS", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+        "T&C", "T&CS", "TAC", "TERMS", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+        "TERMS & CONDITIONS",  # Variant with ampersand
         # Greek
         "ΟΡΟΙ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΙΣ", "ΣΗΜΑΝΤΙΚΟΙ ΟΡΟΙ", "ΠΛΗΡΕΙΣ ΟΡΟΙ", "ΟΡΟΙ",
         # Spanish
@@ -245,14 +272,19 @@ SECTION_MARKERS = {
         "VILLKOR", "ALLMÄNNA VILLKOR",
         # Norwegian
         "VILKÅR", "BETINGELSER",
+        "BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER OG VILKÅR",
         # Danish
         "VILKÅR OG BETINGELSER", "BETINGELSER",
         # Polish
-        "REGULAMIN", "WARUNKI",
+        "REGULAMIN", "WARUNKI", "WARUNKI I ZASADY", "ISTOTNE WARUNKI I ZASADY",
         # Turkish
-        "ŞARTLAR VE KOŞULLAR", "KOŞULLAR",
+        "ŞARTLAR VE KOŞULLAR", "KOŞULLAR", "ŞARTLAR & KOŞULLAR",
+        "ÖNEMLI ŞARTLAR VE KOŞULLAR",  # Turkish "Important Terms"
         # Estonian
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",
+        "REEGLID JA TINGIMUSED", "REEGLID",
+        # Latvian
+        "NOTEIKUMI", "BŪTISKIE NOTEIKUMI",
         # Icelandic
         "REGLUR OG SKILYRÐI", "SKILYRÐI",
     ],

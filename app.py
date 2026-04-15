@@ -125,15 +125,20 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
             return code.split("-", 1)[0]
 
         # Market codes that represent Spanish/Portuguese content
-        if code in {"arg", "cl", "co", "mx", "pe", "py"}:
+        if code in {"arg", "cl", "co", "col", "mx", "pe", "py", "arg_py"}:
             return "es"
         if code == "br":
             return "pt"
+        if code == "dk":
+            return "da"
 
         # Workspace-specific aliases
         aliases = {
             "gr": "el",  # Greek
             "no": "no",  # Norwegian
+            "et_et": "et",  # Estonian for Estonia
+            "et_ru": "ru",  # Russian for Estonia
+            "pe_en": "en",  # English for Peru
         }
         return aliases.get(code, code)
 

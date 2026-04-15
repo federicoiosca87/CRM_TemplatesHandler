@@ -1447,7 +1447,7 @@ def detect_offer_type(parsed_docs: list) -> dict:
     
     # Check for placeholders first (highest confidence)
     if "%%depositfulfillmentamount%%" in all_text_lower or "%%depositexcludedpayments%%" in all_text_lower:
-        task_type = "DepositTask"
+        task_type = "Deposit"
         task_confidence = "high"
     elif "%%sbwagertaskon%%" in all_text_lower or "%%taskminimumodds%%" in all_text_lower:
         task_type = "PlaceBetWithSettlement"
@@ -1463,7 +1463,7 @@ def detect_offer_type(parsed_docs: list) -> dict:
         task_confidence = "high"
     # Keyword detection (medium confidence)
     elif any(kw in all_text_lower for kw in ["deposit", "deposita", "déposer", "einzahlung", "talletaa"]):
-        task_type = "DepositTask"
+        task_type = "Deposit"
         task_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["bet on", "place a bet", "apuesta", "wager on sports", "sportsbook bet"]):
         task_type = "PlaceBetWithSettlement"
@@ -1499,9 +1499,9 @@ def detect_offer_type(parsed_docs: list) -> dict:
     elif "%%sbrewardstake%%" in all_text_lower:
         # Free bet reward
         if any(kw in all_text_lower for kw in ["risk-free", "risk free"]):
-            reward_type = "RiskFreeBet" if not is_cash else "CashRiskFreeBet"
+            reward_type = "BonusRiskFreeBet" if not is_cash else "CashRiskFreeBet"
         else:
-            reward_type = "FreeBet" if not is_cash else "CashFreeBet"
+            reward_type = "BonusFreeBet" if not is_cash else "CashFreeBet"
         reward_confidence = "high"
     # Keyword detection
     elif any(kw in all_text_lower for kw in ["free spin", "freespin", "giros gratis", "free cash spin"]):
@@ -1513,9 +1513,9 @@ def detect_offer_type(parsed_docs: list) -> dict:
         reward_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["free bet", "freebet", "apuesta gratis"]):
         if "risk" in all_text_lower:
-            reward_type = "RiskFreeBet"
+            reward_type = "BonusRiskFreeBet"
         else:
-            reward_type = "FreeBet"
+            reward_type = "BonusFreeBet"
         reward_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["bonus money", "bonus cash", "dinero de bono"]):
         reward_type = "BonusMoney"
@@ -1535,12 +1535,12 @@ def detect_offer_type(parsed_docs: list) -> dict:
             recommended_image = "Cash Free Spin (Casino)"
         elif reward_type == "Freespin":
             recommended_image = "Bonus Free Spin (Casino)"
-        elif reward_type in ["FreeBet", "CashFreeBet"]:
+        elif reward_type in ["BonusFreeBet", "CashFreeBet"]:
             if is_cash or reward_type == "CashFreeBet":
                 recommended_image = "Cash Free Bet (Sportsbook)"
             else:
                 recommended_image = "Bonus Free Bet (Sportsbook)"
-        elif reward_type in ["RiskFreeBet", "CashRiskFreeBet"]:
+        elif reward_type in ["BonusRiskFreeBet", "CashRiskFreeBet"]:
             if is_cash:
                 recommended_image = "Cash Risk Free Bet (Sportsbook)"
             else:

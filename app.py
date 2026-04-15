@@ -120,14 +120,37 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
         if not code:
             return code
 
+        # Handle BT-XX brand prefix codes (e.g., BT-PT -> pt, BT-ES -> es)
+        if code.startswith("bt-") and len(code) > 3:
+            suffix = code[3:]  # Get the part after "bt-"
+            # Map common suffixes to langdetect codes
+            bt_suffix_map = {
+                "pt": "pt",  # Portuguese
+                "br": "pt",  # Brazilian Portuguese
+                "es": "es",  # Spanish
+                "it": "it",  # Italian
+                "fi": "fi",  # Finnish
+                "no": "no",  # Norwegian
+                "dk": "da",  # Danish
+                "da": "da",  # Danish
+                "pl": "pl",  # Polish
+                "lv": "lv",  # Latvian
+                "ee": "et",  # Estonian
+                "et": "et",  # Estonian
+                "gr": "el",  # Greek
+                "el": "el",  # Greek
+                "en": "en",  # English
+            }
+            return bt_suffix_map.get(suffix, suffix)
+
         # Handle cms variants like es-ar-ba, ru-ee, en-pe
         if "-" in code:
             return code.split("-", 1)[0]
 
         # Market codes that represent Spanish/Portuguese content
-        if code in {"arg", "cl", "co", "col", "mx", "pe", "py", "arg_py"}:
+        if code in {"arg", "ar", "cl", "co", "col", "mx", "pe", "py", "arg_py"}:
             return "es"
-        if code == "br":
+        if code in {"br", "pt"}:
             return "pt"
         if code == "dk":
             return "da"

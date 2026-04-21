@@ -11,6 +11,36 @@ from typing import Optional
 from docx import Document
 from config import SECTION_MARKERS, TEMPLATE_VARIANTS, LANGUAGE_MAPPING
 
+# Localized field labels (Title / Body / CTA equivalents)
+# Icelandic: Titill (Title), Meginmál (Body)
+# Estonian: Pealkiri (Title)
+# Spanish: Título/Titulo (Title), Cuerpo (Body)
+TITLE_LABELS = {"TITLE", "PEALKIRI", "TITILL", "TÍTULO", "TITULO"}
+BODY_LABELS = {"BODY", "MEGINMÁL", "MEGINMAL", "CUERPO"}
+CTA_LABELS = {"CTA", "CALL TO ACTION", "CALLTOACTION"}
+
+
+def _is_label_start(text_upper: str, labels: set[str]) -> bool:
+    """Check if text starts with a label followed by newline or colon+newline."""
+    for label in labels:
+        if text_upper.startswith(label + "\n") or text_upper.startswith(label + ":\n"):
+            return True
+    return False
+
+
+def _is_standalone_label(text_upper: str, labels: set[str]) -> bool:
+    """Check if text is exactly a label (with optional colon)."""
+    return text_upper in labels or (text_upper.rstrip(":") in labels and text_upper.endswith(":"))
+
+
+def _strip_label_prefix(text: str, text_upper: str, labels: set[str]) -> Optional[str]:
+    """If text starts with 'Label: content' or 'Label content', return the content after the label."""
+    for label in labels:
+        if text_upper.startswith(label + ":") or text_upper.startswith(label + " "):
+            rest = text[len(label):].lstrip(": ").strip()
+            return rest if rest else None
+    return None
+
 
 @dataclass
 class TemplateContent:
@@ -375,7 +405,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
             
             # Check if paragraph starts with a label followed by newline (embedded label)
             # e.g., "Title\n🎮 Bet on Sports..." or "Body\n🎯 Get..."
-            if para_stripped.upper().startswith("TITLE\n") or para_stripped.upper().startswith("TITLE:\n") or para_stripped.upper().startswith("PEALKIRI\n") or para_stripped.upper().startswith("PEALKIRI:\n"):
+            if _is_label_start(para_stripped.upper(), TITLE_LABELS):
                 current_field = "title"
                 # Extract content after the label
                 newline_pos = para_stripped.find('\n')
@@ -385,7 +415,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                         current_template.title = (current_template.title or "") + "\n" + rest if current_template.title else rest
                         current_template.title = current_template.title.strip()
                 continue
-            elif para_stripped.upper().startswith("BODY\n") or para_stripped.upper().startswith("BODY:\n"):
+            elif _is_label_start(para_stripped.upper(), BODY_LABELS):
                 current_field = "body"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -394,7 +424,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                         current_template.body = (current_template.body or "") + "\n" + rest if current_template.body else rest
                         current_template.body = current_template.body.strip()
                 continue
-            elif para_stripped.upper().startswith("CTA\n") or para_stripped.upper().startswith("CTA:\n"):
+            elif _is_label_start(para_stripped.upper(), CTA_LABELS):
                 current_field = "cta"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -405,33 +435,30 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                 continue
             
             # Handle standalone labels (no embedded content)
-            if para_upper in ("TITLE", "TITLE:", "PEALKIRI", "PEALKIRI:"):
+            if _is_standalone_label(para_upper, TITLE_LABELS):
                 current_field = "title"
                 continue
-            elif para_upper.startswith("TITLE:") or para_upper.startswith("TITLE ") or para_upper.startswith("PEALKIRI:") or para_upper.startswith("PEALKIRI "):
-                # "Title: actual content" or "Pealkiri: actual content" - strip prefix and use the rest
+            elif _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS) is not None:
                 current_field = "title"
-                rest = para_stripped.split(None, 1)[1].strip() if len(para_stripped.split(None, 1)) > 1 else ""
+                rest = _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS)
                 if rest:
                     current_template.title = rest
                 continue
-            elif para_upper == "BODY" or para_upper == "BODY:":
+            elif _is_standalone_label(para_upper, BODY_LABELS):
                 current_field = "body"
                 continue
-            elif para_upper.startswith("BODY:") or para_upper.startswith("BODY "):
-                # "Body: actual content" - strip prefix and use the rest
+            elif _strip_label_prefix(para_stripped, para_upper, BODY_LABELS) is not None:
                 current_field = "body"
-                rest = para_stripped[5:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, BODY_LABELS)
                 if rest:
                     current_template.body = rest
                 continue
-            elif para_upper in ["CTA", "CTA:", "CALL TO ACTION", "CALLTOACTION"]:
+            elif _is_standalone_label(para_upper, CTA_LABELS):
                 current_field = "cta"
                 continue
-            elif para_upper.startswith("CTA:") or para_upper.startswith("CTA "):
-                # "CTA: actual content" - strip prefix and use the rest
+            elif _strip_label_prefix(para_stripped, para_upper, CTA_LABELS) is not None:
                 current_field = "cta"
-                rest = para_stripped[4:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, CTA_LABELS)
                 if rest:
                     current_template.cta = rest
                 continue
@@ -524,10 +551,10 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
             continue
         
         # If we hit Title/Body/CTA without a template, create default (A)
-        if not current_template and (para_upper in ["TITLE", "TITLE:", "BODY", "BODY:", "CTA", "CTA:"] or
-                                      para_upper.startswith("TITLE") or 
-                                      para_upper.startswith("BODY") or
-                                      para_upper.startswith("CTA")):
+        if not current_template and (_is_standalone_label(para_upper, TITLE_LABELS) or
+                                      _is_standalone_label(para_upper, BODY_LABELS) or
+                                      _is_standalone_label(para_upper, CTA_LABELS) or
+                                      any(para_upper.startswith(lbl) for lbl in TITLE_LABELS | BODY_LABELS | CTA_LABELS)):
             current_template = TemplateContent(
                 variant="A",
                 send_condition="ClaimedReward-TemplateA"
@@ -535,7 +562,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
         
         if current_template:
             # Handle embedded labels (e.g., "Title\nActual title text")
-            if para_stripped.upper().startswith("TITLE\n") or para_stripped.upper().startswith("TITLE:\n") or para_stripped.upper().startswith("PEALKIRI\n") or para_stripped.upper().startswith("PEALKIRI:\n"):
+            if _is_label_start(para_stripped.upper(), TITLE_LABELS):
                 current_field = "title"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -543,7 +570,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                     if rest:
                         current_template.title = rest
                 continue
-            elif para_stripped.upper().startswith("BODY\n") or para_stripped.upper().startswith("BODY:\n"):
+            elif _is_label_start(para_stripped.upper(), BODY_LABELS):
                 current_field = "body"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -551,7 +578,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                     if rest:
                         current_template.body = rest
                 continue
-            elif para_stripped.upper().startswith("CTA\n") or para_stripped.upper().startswith("CTA:\n"):
+            elif _is_label_start(para_stripped.upper(), CTA_LABELS):
                 current_field = "cta"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -561,30 +588,30 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                 continue
             
             # Handle standalone field labels
-            if para_upper in ("TITLE", "TITLE:", "PEALKIRI", "PEALKIRI:"):
+            if _is_standalone_label(para_upper, TITLE_LABELS):
                 current_field = "title"
                 continue
-            elif para_upper.startswith("TITLE:") or para_upper.startswith("TITLE ") or para_upper.startswith("PEALKIRI:") or para_upper.startswith("PEALKIRI "):
+            elif _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS) is not None:
                 current_field = "title"
-                rest = para_stripped.split(None, 1)[1].strip() if len(para_stripped.split(None, 1)) > 1 else ""
+                rest = _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS)
                 if rest:
                     current_template.title = rest
                 continue
-            elif para_upper == "BODY" or para_upper == "BODY:":
+            elif _is_standalone_label(para_upper, BODY_LABELS):
                 current_field = "body"
                 continue
-            elif para_upper.startswith("BODY:") or para_upper.startswith("BODY "):
+            elif _strip_label_prefix(para_stripped, para_upper, BODY_LABELS) is not None:
                 current_field = "body"
-                rest = para_stripped[5:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, BODY_LABELS)
                 if rest:
                     current_template.body = rest
                 continue
-            elif para_upper in ["CTA", "CTA:", "CALL TO ACTION"]:
+            elif _is_standalone_label(para_upper, CTA_LABELS):
                 current_field = "cta"
                 continue
-            elif para_upper.startswith("CTA:") or para_upper.startswith("CTA "):
+            elif _strip_label_prefix(para_stripped, para_upper, CTA_LABELS) is not None:
                 current_field = "cta"
-                rest = para_stripped[4:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, CTA_LABELS)
                 if rest:
                     current_template.cta = rest
                 continue

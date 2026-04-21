@@ -1624,32 +1624,35 @@ def check_template_consistency(parsed_docs: list) -> dict:
         
         report["by_language"][lang] = variants
     
-    # Compare all languages against the first one (reference)
-    if len(parsed_docs) > 1:
-        ref_lang = parsed_docs[0].language_code
-        ref_variants = report["by_language"][ref_lang]
-        
-        for lang, variants in report["by_language"].items():
-            if lang == ref_lang:
-                continue
-            
-            for section in ["launch_oms", "reminder_oms", "reward_oms", "launch_sms", "reminder_sms"]:
-                ref_set = ref_variants[section]
+    # Build expected variant set per section using majority voting
+    # A variant is "expected" if >50% of languages have it
+    if len(report["by_language"]) > 1:
+        total_langs = len(report["by_language"])
+        threshold = total_langs / 2
+
+        for section in ["launch_oms", "reminder_oms", "reward_oms", "launch_sms", "reminder_sms"]:
+            # Count how many languages have each variant
+            variant_counts: dict[str, int] = {}
+            for variants in report["by_language"].values():
+                for v in variants[section]:
+                    variant_counts[v] = variant_counts.get(v, 0) + 1
+
+            expected = {v for v, count in variant_counts.items() if count > threshold}
+
+            for lang, variants in report["by_language"].items():
                 lang_set = variants[section]
-                
-                missing = ref_set - lang_set
-                extra = lang_set - ref_set
-                
+                missing = expected - lang_set
+                extra = lang_set - expected
+
+                section_name = section.replace("_", " ").title()
                 if missing:
                     report["is_consistent"] = False
-                    section_name = section.replace("_", " ").title()
                     report["issues"].append(f"❌ {lang}: Missing {section_name} variants: {', '.join(sorted(missing))}")
-                
+
                 if extra:
                     report["is_consistent"] = False
-                    section_name = section.replace("_", " ").title()
                     report["issues"].append(f"⚠️ {lang}: Extra {section_name} variants: {', '.join(sorted(extra))}")
-    
+
     return report
 
 

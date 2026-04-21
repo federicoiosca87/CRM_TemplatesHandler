@@ -265,7 +265,7 @@ def _parse_my_offers_section(paragraphs: list[str]) -> Optional[MyOffersSection]
         "TÉRMINOS Y CONDICIONES", "TERMOS E CONDIÇÕES",
         "TERMINI E CONDIZIONI", "CONDITIONS GÉNÉRALES", "AGB",
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
-        "REEGLID JA TINGIMUSED", "REEGLID",  # Estonian (alt)
+        "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
         "KÄYTTÖEHDOT", "EHDOT",  # Finnish
         "TERMS & CONDITIONS",  # English variant
@@ -339,7 +339,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
             "TÉRMINOS Y CONDICIONES", "TERMOS E CONDIÇÕES",
             "TERMINI E CONDIZIONI", "CONDITIONS GÉNÉRALES", "AGB",
             "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
-            "REEGLID JA TINGIMUSED", "REEGLID",  # Estonian (alt)
+            "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
             "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
             "KÄYTTÖEHDOT", "EHDOT",  # Finnish
             "TERMS & CONDITIONS",  # English variant
@@ -359,8 +359,9 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
         
         # Check for combined section+variant header (table-based docs)
         # e.g. "LAUNCH OMS - TemplateA", "REMINDER OMS - TemplateB"
-        combined_match = re.search(r"(?:TEMPLATE|MALL|PÕHI)\s*([A-F])", para_upper)
-        if combined_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "OMS" in para_upper):
+        # Also handles Estonian: "Näidis" (Template), "Meeldetuletus" (Reminder), "Lansseerimine" (Launch)
+        combined_match = re.search(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
+        if combined_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "OMS" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper):
             if current_template:
                 section.templates.append(current_template)
             current_template = TemplateContent(
@@ -372,8 +373,9 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
 
         # Check for "Launch A" / "Reminder A" format (DK-style docs)
         # e.g. "Launch A", "Reminder B" — section type + variant letter, no "Template" keyword
+        # Also handles Estonian equivalents: "Lansseerimine A", "Meeldetuletus B"
         short_variant_match = re.match(
-            r"^(?:LAUNCH|REMINDER|OMS\s+(?:LAUNCH|REMINDER))\s+([A-F])$", para_upper
+            r"^(?:LAUNCH|REMINDER|LANSSEERIMINE|MEELDETULETUS|OMS\s+(?:LAUNCH|REMINDER))\s+([A-F])$", para_upper
         )
         if short_variant_match:
             if current_template:
@@ -386,7 +388,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
             continue
 
         # Check for template variant marker
-        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI)\s*([A-F])", para_upper)
+        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
         if variant_match:
             if current_template:
                 section.templates.append(current_template)
@@ -489,7 +491,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
     # Check if header itself contains template variant (e.g., "REWARD RECEIVED – OMS – Template A")
     header_para = paragraphs[start].upper()
     header_variant = None
-    variant_match = re.search(r'(?:TEMPLATE|MALL|PÕHI)\s*([A-F])', header_para)
+    variant_match = re.search(r'(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])', header_para)
     if variant_match:
         header_variant = variant_match.group(1)
     
@@ -501,7 +503,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
         "TÉRMINOS Y CONDICIONES", "TERMOS E CONDIÇÕES",
         "TERMINI E CONDIZIONI", "CONDITIONS GÉNÉRALES", "AGB",
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
-        "REEGLID JA TINGIMUSED", "REEGLID",  # Estonian (alt)
+        "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
         "KÄYTTÖEHDOT", "EHDOT",  # Finnish
         "TERMS & CONDITIONS",  # English variant
@@ -538,7 +540,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
             continue
         
         # Check for explicit template variant marker
-        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI)\s*([A-F])", para_upper)
+        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
         if variant_match:
             if current_template:
                 section.templates.append(current_template)
@@ -643,12 +645,18 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         et_target = et_targets.get(target, "")
         for i, para in enumerate(paragraphs):
             para_upper_stripped = para.upper().strip()
+            # Strip leading $ (Word doc artifact in some templates)
+            if para_upper_stripped.startswith('$'):
+                para_upper_stripped = para_upper_stripped[1:].strip()
             # Match "SMS", "СМС", or lines starting with "SMS " (e.g., "SMS 18+. sms.%%BrandDomain%%/mensagem")
             is_sms_header = para_upper_stripped in ("SMS", "СМС") or para_upper_stripped.startswith("SMS ") or para_upper_stripped.startswith("СМС ")
             if is_sms_header:
                 # Scan ahead for the target sub-header within the SMS block
                 for j in range(i + 1, len(paragraphs)):
                     line = paragraphs[j].upper().strip()
+                    # Strip leading $ (Word doc artifact)
+                    if line.startswith('$'):
+                        line = line[1:].strip()
                     # Stop if we hit T&C or ADDITIONAL INFO (left the SMS table)
                     if line in ("TAC", "T&C", "T&CS", "ADDITIONAL INFO", "NOTEIKUMI", "TINGIMUSED") or line.startswith("CAMPAIGNWIZARD"):
                         break
@@ -678,7 +686,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         "ALLGEMEINE GESCHÄFTSBEDINGUNGEN", "AGB",
         "VILKÅR OG BETINGELSER", "ALLMÄNNA VILLKOR",
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
-        "REEGLID JA TINGIMUSED", "REEGLID",  # Estonian (alt)
+        "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
         "KÄYTTÖEHDOT", "EHDOT",  # Finnish
         "TERMS & CONDITIONS",  # English variant
@@ -691,9 +699,14 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
     end = len(paragraphs)
     for i, para in enumerate(paragraphs[start + 1:], start + 1):
         para_upper = para.upper().strip()
+        # Strip leading $ (Word doc artifact in some templates)
+        if para_upper.startswith('$'):
+            para_upper = para_upper[1:].strip()
         
         # Check if we hit another major section
-        if section_type == "Launch" and ("REMINDER SMS" in para_upper or "REMINDER СМС" in para_upper or "SMS - REMINDER" in para_upper or para_upper in ("REMINDER", "MEELDETULETUS")):
+        # Normalize multiple spaces to single for reliable substring matching
+        para_upper_norm = re.sub(r'\s+', ' ', para_upper)
+        if section_type == "Launch" and ("REMINDER SMS" in para_upper_norm or "REMINDER СМС" in para_upper_norm or "SMS - REMINDER" in para_upper_norm or "MEELDETULETUS SMS" in para_upper_norm or "MEELDETULETUS" in para_upper_norm or para_upper_norm in ("REMINDER", "MEELDETULETUS")):
             end = i
             break
         # Only match exact T&C section headers
@@ -712,28 +725,48 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         elif para_for_match.startswith("- ") or para_for_match.startswith("* "):
             para_for_match = para_for_match[2:]
         
+        # Strip leading $ (Word doc artifact in some templates, e.g. "$REMINDER")
+        if para_for_match.startswith('$'):
+            para_for_match = para_for_match[1:].strip()
+        
         para_upper = para_for_match.upper().strip()
         
         # Check for combined section+variant header (table-based docs)
         # e.g. "LAUNCH SMS - TemplateA", "REMINDER SMS - TemplateB"
-        combined_sms_match = re.search(r"(?:TEMPLATE|MALL|PÕHI)\s*([A-F])", para_upper)
+        # Also handles Estonian: "Näidis" (Template), "Meeldetuletus" (Reminder), "Lansseerimine" (Launch)
+        combined_sms_match = re.search(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
         has_sms = "SMS" in para_upper or "СМС" in para_upper
-        if combined_sms_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper) and has_sms:
+        if combined_sms_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper) and has_sms:
             if current_template:
                 section.templates.append(current_template)
+            # Extract any inline body after the header line (table-based docs
+            # may have header + body in the same cell separated by newline)
+            inline_body = None
+            variant_end = combined_sms_match.end()
+            rest_after_variant = para_for_match[variant_end:]
+            # Check for newline - body is on the next line within the same paragraph
+            newline_pos = rest_after_variant.find('\n')
+            if newline_pos >= 0:
+                inline_body = rest_after_variant[newline_pos + 1:].strip()
+            else:
+                # No newline - check if there's content directly after variant (e.g. colon+text)
+                rest_stripped = rest_after_variant.strip().lstrip(':').strip()
+                if rest_stripped:
+                    inline_body = rest_stripped
             current_template = TemplateContent(
                 variant=combined_sms_match.group(1),
-                send_condition=send_condition
+                send_condition=send_condition,
+                body=inline_body if inline_body else None
             )
             continue
 
         # Skip SMS section headers (e.g., "SMS TEMPLATES", "LAUNCH SMS", "REMINDER SMS", "SMS - LAUNCH")
-        # Also handles Cyrillic "СМС" (Russian)
-        if has_sms and ("LAUNCH" in para_upper or "REMINDER" in para_upper or para_upper in ("SMS", "СМС") or "TEMPLATES" in para_upper):
+        # Also handles Cyrillic "СМС" (Russian) and Estonian equivalents
+        if has_sms and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper or para_upper in ("SMS", "СМС") or "TEMPLATES" in para_upper):
             continue
 
         # Skip standalone sub-headers (table-based docs: "LAUNCH" or "REMINDER" on their own line)
-        # Also handles Estonian equivalents
+        # Also handles Estonian equivalents and $ prefixed headers
         if para_upper in ("LAUNCH", "REMINDER", "LANSSEERIMINE", "MEELDETULETUS"):
             continue
 
@@ -742,13 +775,13 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
             continue
         
         # Check for template variant marker with inline body (e.g., "Template A: body content...")
-        inline_match = re.match(r"^(?:TEMPLATE|MALL|PÕHI)\s*([A-F])[:：\s]+(.+)$", para_upper)
+        inline_match = re.match(r"^(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])[:：\s]+(.+)$", para_upper)
         if inline_match:
             if current_template:
                 section.templates.append(current_template)
             variant = inline_match.group(1)
             # Get the actual body content (not uppercased), use stripped version without bullet
-            inline_body_match = re.match(r"^(?:[Tt]emplate|[Mm]all|[Pp]õhi)\s*[A-F][:：\s]+(.+)$", para_for_match)
+            inline_body_match = re.match(r"^(?:[Tt]emplate|[Mm]all|[Pp]õhi|[Nn]äidis)\s*[A-F][:：\s]+(.+)$", para_for_match)
             if inline_body_match:
                 body_content = inline_body_match.group(1)
             else:
@@ -761,7 +794,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
             continue
         
         # Check for template variant marker without inline body (e.g., "Template A" on its own line)
-        variant_match = re.match(r"^(?:TEMPLATE|MALL|PÕHI)\s*([A-F])$", para_upper)
+        variant_match = re.match(r"^(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])$", para_upper)
         if variant_match:
             if current_template:
                 section.templates.append(current_template)
@@ -820,7 +853,7 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
         "TERMINI IMPORTANTI",  # Italian
         "CONDITIONS IMPORTANTES",  # French
         "WICHTIGE BEDINGUNGEN",  # German
-        "OLULISED TINGIMUSED",  # Estonian
+        "OLULISED TINGIMUSED", "OLULISED REEGLID",  # Estonian
         "ОСНОВНЫЕ ПРАВИЛА", "ВАЖНЫЕ УСЛОВИЯ",  # Russian
         "TÄRKEÄT EHDOT",  # Finnish
         "VIKTIGE BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER",  # Norwegian
@@ -839,6 +872,7 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
         "CONDITIONS GÉNÉRALES",  # French
         "ALLGEMEINE GESCHÄFTSBEDINGUNGEN", "AGB",  # German
         "TÄIELIKUD TINGIMUSED", "TINGIMUSED",  # Estonian
+        "REEGLID JA TINGIMUSED", "REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI",  # Icelandic
         "ПОЛНЫЕ ПРАВИЛА", "ПРАВИЛА И УСЛОВИЯ",  # Russian
         "TÄYDELLISET EHDOT", "KÄYTTÖEHDOT",  # Finnish

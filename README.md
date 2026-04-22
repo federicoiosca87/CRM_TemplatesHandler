@@ -126,12 +126,46 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Local (Python)
+
 ```bash
 # Start the dashboard
 streamlit run app.py
 ```
 
 The app will open in your browser at http://localhost:8501
+
+### Docker
+
+Build the image:
+
+```bash
+docker build -t crm-templates-handler .
+```
+
+Run with your local secrets mounted (recommended for local testing):
+
+```bash
+docker run --rm -p 8501:8080 \
+  -v "$(pwd)/.streamlit/secrets.toml:/app/.streamlit/secrets.toml:ro" \
+  crm-templates-handler
+```
+
+Open http://localhost:8501.
+
+> **Note:** Streamlit logs port `8080` (the internal container port) in the console — ignore it. The app is always accessible on the host port you mapped, `8501` in the command above.
+
+Alternatively, pass OAuth config via environment variables (used in deployed environments):
+
+```bash
+docker run --rm -p 8501:8080 \
+  -e OAUTH_AUTHORITY="https://your-identity-server" \
+  -e OAUTH_CLIENT_ID="Tools.CRM_TemplateHandler" \
+  -e OAUTH_CLIENT_SECRET="" \
+  -e OAUTH_SCOPES="openid profile IdentityServerApi" \
+  -e OAUTH_REDIRECT_URI="http://localhost:8501" \
+  crm-templates-handler
+```
 
 ### Steps:
 

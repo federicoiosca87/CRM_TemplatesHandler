@@ -1,0 +1,42 @@
+name: crm-templates-handler
+group: campaigns-rewards
+team: campaigns-rewards
+dockerImageArchitecture: linux/amd64
+containerPort: 8080
+telemetry:
+    liveness:
+        port: 8080
+        path: /_stcore/health
+    readiness:
+        port: 8080
+        path: /_stcore/health
+    metrics:
+        enabled: false
+    tracing:
+        enabled: false
+environmentDefaults:
+    robot: robot-crm-templates
+    replicas: 1
+environments:
+    test:
+        clusters:
+            - apps-igaming-test-euc1
+        strictResources:
+            memoryMegabytes: 512
+        expose:
+            outsideCluster:
+                internal:
+                    asName: crm-templates-handler-test
+            insideCluster:
+                sameNamespace: true
+    qa:
+        clusters:
+            - apps-igaming-test-euc1
+        strictResources:
+            memoryMegabytes: 512
+        expose:
+            outsideCluster:
+                internal:
+                    asName: crm-templates-handler-qa
+            insideCluster:
+                sameNamespace: true

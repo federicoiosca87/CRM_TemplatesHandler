@@ -11,6 +11,36 @@ from typing import Optional
 from docx import Document
 from config import SECTION_MARKERS, TEMPLATE_VARIANTS, LANGUAGE_MAPPING
 
+# Localized field labels (Title / Body / CTA equivalents)
+# Icelandic: Titill (Title), Meginmál (Body)
+# Estonian: Pealkiri (Title)
+# Spanish: Título/Titulo (Title), Cuerpo (Body)
+TITLE_LABELS = {"TITLE", "PEALKIRI", "TITILL", "TÍTULO", "TITULO"}
+BODY_LABELS = {"BODY", "MEGINMÁL", "MEGINMAL", "CUERPO"}
+CTA_LABELS = {"CTA", "CALL TO ACTION", "CALLTOACTION"}
+
+
+def _is_label_start(text_upper: str, labels: set[str]) -> bool:
+    """Check if text starts with a label followed by newline or colon+newline."""
+    for label in labels:
+        if text_upper.startswith(label + "\n") or text_upper.startswith(label + ":\n"):
+            return True
+    return False
+
+
+def _is_standalone_label(text_upper: str, labels: set[str]) -> bool:
+    """Check if text is exactly a label (with optional colon)."""
+    return text_upper in labels or (text_upper.rstrip(":") in labels and text_upper.endswith(":"))
+
+
+def _strip_label_prefix(text: str, text_upper: str, labels: set[str]) -> Optional[str]:
+    """If text starts with 'Label: content' or 'Label content', return the content after the label."""
+    for label in labels:
+        if text_upper.startswith(label + ":") or text_upper.startswith(label + " "):
+            rest = text[len(label):].lstrip(": ").strip()
+            return rest if rest else None
+    return None
+
 
 @dataclass
 class TemplateContent:
@@ -119,8 +149,12 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
             is_list_item = False
             if para._p.pPr is not None and para._p.pPr.numPr is not None:
                 is_list_item = True
-            elif para.style and 'list' in para.style.name.lower():
-                is_list_item = True
+            else:
+                try:
+                    if para.style and 'list' in para.style.name.lower():
+                        is_list_item = True
+                except Exception:
+                    pass  # Skip style check for corrupted docs
             
             # Prefix list items with bullet character
             if is_list_item:
@@ -129,37 +163,43 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
             paragraphs.append(text)
 
     # Capture text authored inside tables (cells are not included in doc.paragraphs).
-    # Use error handling in case of malformed tables.
-    try:
-        for table in doc.tables:
-            try:
-                for row in table.rows:
-                    for cell in row.cells:
+    # Table-based docs use key-value rows: [Label, Value]. Merged cells produce
+    # duplicate text across columns, so we deduplicate per-row.
+    _CMS_METADATA_RE = re.compile(
+        r"^CampaignWizard(Oms|Sms|TC)Template\.", re.IGNORECASE
+    )
+    for table in doc.tables:
+        for row in table.rows:
+            seen_in_row = set()
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    text = para.text.strip()
+                    # Normalize non-breaking spaces
+                    text = text.replace("\xa0", " ")
+                    if not text:
+                        continue
+                    # Skip CMS metadata rows (e.g. "CampaignWizardOmsTemplate.Deposit-...")
+                    if _CMS_METADATA_RE.match(text):
+                        continue
+                    # Deduplicate merged cells within the same row
+                    if text in seen_in_row:
+                        continue
+                    seen_in_row.add(text)
+
+                    is_list_item = False
+                    if para._p.pPr is not None and para._p.pPr.numPr is not None:
+                        is_list_item = True
+                    else:
                         try:
-                            for para in cell.paragraphs:
-                                text = para.text.strip()
-                                if not text:
-                                    continue
-
-                                is_list_item = False
-                                if para._p.pPr is not None and para._p.pPr.numPr is not None:
-                                    is_list_item = True
-                                elif para.style and "list" in para.style.name.lower():
-                                    is_list_item = True
-
-                                if is_list_item:
-                                    text = "• " + text
-
-                                paragraphs.append(text)
+                            if para.style and "list" in para.style.name.lower():
+                                is_list_item = True
                         except Exception:
-                            # Skip cells that can't be read; continue with next cell
-                            continue
-            except Exception:
-                # Skip tables with structural issues; continue with next table
-                continue
-    except Exception:
-        # If table extraction fails completely, proceed with paragraph text only
-        pass
+                            pass  # Skip style check for corrupted docs
+
+                    if is_list_item:
+                        text = "• " + text
+
+                    paragraphs.append(text)
     
     parsed = ParsedDocument(
         language_code=language_code,
@@ -220,13 +260,20 @@ def _parse_my_offers_section(paragraphs: list[str]) -> Optional[MyOffersSection]
     
     # Exact T&C section headers for boundary detection
     tc_exact_headers = [
-        "T&C", "T&CS", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+        "T&C", "T&CS", "TAC", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
         "ΟΡΟΙ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΙΣ", "ΣΗΜΑΝΤΙΚΟΙ ΟΡΟΙ", "ΠΛΗΡΕΙΣ ΟΡΟΙ",
         "TÉRMINOS Y CONDICIONES", "TERMOS E CONDIÇÕES",
         "TERMINI E CONDIZIONI", "CONDITIONS GÉNÉRALES", "AGB",
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
+        "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
         "KÄYTTÖEHDOT", "EHDOT",  # Finnish
+        "TERMS & CONDITIONS",  # English variant
+        "ŞARTLAR VE KOŞULLAR", "ŞARTLAR & KOŞULLAR",  # Turkish
+        "ÖNEMLI ŞARTLAR VE KOŞULLAR",  # Turkish (significant)
+        "WARUNKI I ZASADY", "ISTOTNE WARUNKI I ZASADY",  # Polish
+        "BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER OG VILKÅR",  # Norwegian
+        "NOTEIKUMI", "BŪTISKIE NOTEIKUMI",  # Latvian
     ]
     
     for para in paragraphs[start:]:
@@ -287,13 +334,20 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
             break
         # Use exact T&C section headers only
         tc_exact_headers = [
-            "T&C", "T&CS", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+            "T&C", "T&CS", "TAC", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
             "ΟΡΟΙ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΙΣ", "ΣΗΜΑΝΤΙΚΟΙ ΟΡΟΙ", "ΠΛΗΡΕΙΣ ΟΡΟΙ",
             "TÉRMINOS Y CONDICIONES", "TERMOS E CONDIÇÕES",
             "TERMINI E CONDIZIONI", "CONDITIONS GÉNÉRALES", "AGB",
             "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
+            "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
             "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
             "KÄYTTÖEHDOT", "EHDOT",  # Finnish
+            "TERMS & CONDITIONS",  # English variant
+            "ŞARTLAR VE KOŞULLAR", "ŞARTLAR & KOŞULLAR",  # Turkish
+            "ÖNEMLI ŞARTLAR VE KOŞULLAR",  # Turkish (significant)
+            "WARUNKI I ZASADY", "ISTOTNE WARUNKI I ZASADY",  # Polish
+            "BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER OG VILKÅR",  # Norwegian
+            "NOTEIKUMI", "BŪTISKIE NOTEIKUMI",  # Latvian
         ]
         if para_upper in tc_exact_headers:
             end = i
@@ -303,8 +357,38 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
         para_stripped = para.strip()
         para_upper = para_stripped.upper()
         
+        # Check for combined section+variant header (table-based docs)
+        # e.g. "LAUNCH OMS - TemplateA", "REMINDER OMS - TemplateB"
+        # Also handles Estonian: "Näidis" (Template), "Meeldetuletus" (Reminder), "Lansseerimine" (Launch)
+        combined_match = re.search(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
+        if combined_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "OMS" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper):
+            if current_template:
+                section.templates.append(current_template)
+            current_template = TemplateContent(
+                variant=combined_match.group(1),
+                send_condition=send_condition
+            )
+            current_field = "title"
+            continue
+
+        # Check for "Launch A" / "Reminder A" format (DK-style docs)
+        # e.g. "Launch A", "Reminder B" — section type + variant letter, no "Template" keyword
+        # Also handles Estonian equivalents: "Lansseerimine A", "Meeldetuletus B"
+        short_variant_match = re.match(
+            r"^(?:LAUNCH|REMINDER|LANSSEERIMINE|MEELDETULETUS|OMS\s+(?:LAUNCH|REMINDER))\s+([A-F])$", para_upper
+        )
+        if short_variant_match:
+            if current_template:
+                section.templates.append(current_template)
+            current_template = TemplateContent(
+                variant=short_variant_match.group(1),
+                send_condition=send_condition
+            )
+            current_field = "title"
+            continue
+
         # Check for template variant marker
-        variant_match = re.match(r"TEMPLATE\s*([A-F])", para_upper)
+        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
         if variant_match:
             if current_template:
                 section.templates.append(current_template)
@@ -323,7 +407,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
             
             # Check if paragraph starts with a label followed by newline (embedded label)
             # e.g., "Title\n🎮 Bet on Sports..." or "Body\n🎯 Get..."
-            if para_stripped.upper().startswith("TITLE\n") or para_stripped.upper().startswith("TITLE:\n"):
+            if _is_label_start(para_stripped.upper(), TITLE_LABELS):
                 current_field = "title"
                 # Extract content after the label
                 newline_pos = para_stripped.find('\n')
@@ -333,7 +417,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                         current_template.title = (current_template.title or "") + "\n" + rest if current_template.title else rest
                         current_template.title = current_template.title.strip()
                 continue
-            elif para_stripped.upper().startswith("BODY\n") or para_stripped.upper().startswith("BODY:\n"):
+            elif _is_label_start(para_stripped.upper(), BODY_LABELS):
                 current_field = "body"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -342,7 +426,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                         current_template.body = (current_template.body or "") + "\n" + rest if current_template.body else rest
                         current_template.body = current_template.body.strip()
                 continue
-            elif para_stripped.upper().startswith("CTA\n") or para_stripped.upper().startswith("CTA:\n"):
+            elif _is_label_start(para_stripped.upper(), CTA_LABELS):
                 current_field = "cta"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -353,33 +437,30 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                 continue
             
             # Handle standalone labels (no embedded content)
-            if para_upper == "TITLE" or para_upper == "TITLE:":
+            if _is_standalone_label(para_upper, TITLE_LABELS):
                 current_field = "title"
                 continue
-            elif para_upper.startswith("TITLE:") or para_upper.startswith("TITLE "):
-                # "Title: actual content" - strip prefix and use the rest
+            elif _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS) is not None:
                 current_field = "title"
-                rest = para_stripped[6:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS)
                 if rest:
                     current_template.title = rest
                 continue
-            elif para_upper == "BODY" or para_upper == "BODY:":
+            elif _is_standalone_label(para_upper, BODY_LABELS):
                 current_field = "body"
                 continue
-            elif para_upper.startswith("BODY:") or para_upper.startswith("BODY "):
-                # "Body: actual content" - strip prefix and use the rest
+            elif _strip_label_prefix(para_stripped, para_upper, BODY_LABELS) is not None:
                 current_field = "body"
-                rest = para_stripped[5:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, BODY_LABELS)
                 if rest:
                     current_template.body = rest
                 continue
-            elif para_upper in ["CTA", "CTA:", "CALL TO ACTION", "CALLTOACTION"]:
+            elif _is_standalone_label(para_upper, CTA_LABELS):
                 current_field = "cta"
                 continue
-            elif para_upper.startswith("CTA:") or para_upper.startswith("CTA "):
-                # "CTA: actual content" - strip prefix and use the rest
+            elif _strip_label_prefix(para_stripped, para_upper, CTA_LABELS) is not None:
                 current_field = "cta"
-                rest = para_stripped[4:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, CTA_LABELS)
                 if rest:
                     current_template.cta = rest
                 continue
@@ -410,20 +491,27 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
     # Check if header itself contains template variant (e.g., "REWARD RECEIVED – OMS – Template A")
     header_para = paragraphs[start].upper()
     header_variant = None
-    variant_match = re.search(r'TEMPLATE\s*([A-F])', header_para)
+    variant_match = re.search(r'(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])', header_para)
     if variant_match:
         header_variant = variant_match.group(1)
     
     # Find end of section - ends at T&C or SMS or next major section
     # Use exact T&C section headers only (not partial matches)
     tc_exact_headers = [
-        "T&C", "T&CS", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+        "T&C", "T&CS", "TAC", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
         "ΟΡΟΙ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΙΣ", "ΣΗΜΑΝΤΙΚΟΙ ΟΡΟΙ", "ΠΛΗΡΕΙΣ ΟΡΟΙ",
         "TÉRMINOS Y CONDICIONES", "TERMOS E CONDIÇÕES",
         "TERMINI E CONDIZIONI", "CONDITIONS GÉNÉRALES", "AGB",
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
+        "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
         "KÄYTTÖEHDOT", "EHDOT",  # Finnish
+        "TERMS & CONDITIONS",  # English variant
+        "ŞARTLAR VE KOŞULLAR", "ŞARTLAR & KOŞULLAR",  # Turkish
+        "ÖNEMLI ŞARTLAR VE KOŞULLAR",  # Turkish (significant)
+        "WARUNKI I ZASADY", "ISTOTNE WARUNKI I ZASADY",  # Polish
+        "BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER OG VILKÅR",  # Norwegian
+        "NOTEIKUMI", "BŪTISKIE NOTEIKUMI",  # Latvian
     ]
     end = len(paragraphs)
     for i, para in enumerate(paragraphs[start + 1:], start + 1):
@@ -452,7 +540,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
             continue
         
         # Check for explicit template variant marker
-        variant_match = re.match(r"TEMPLATE\s*([A-F])", para_upper)
+        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
         if variant_match:
             if current_template:
                 section.templates.append(current_template)
@@ -465,10 +553,10 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
             continue
         
         # If we hit Title/Body/CTA without a template, create default (A)
-        if not current_template and (para_upper in ["TITLE", "TITLE:", "BODY", "BODY:", "CTA", "CTA:"] or
-                                      para_upper.startswith("TITLE") or 
-                                      para_upper.startswith("BODY") or
-                                      para_upper.startswith("CTA")):
+        if not current_template and (_is_standalone_label(para_upper, TITLE_LABELS) or
+                                      _is_standalone_label(para_upper, BODY_LABELS) or
+                                      _is_standalone_label(para_upper, CTA_LABELS) or
+                                      any(para_upper.startswith(lbl) for lbl in TITLE_LABELS | BODY_LABELS | CTA_LABELS)):
             current_template = TemplateContent(
                 variant="A",
                 send_condition="ClaimedReward-TemplateA"
@@ -476,7 +564,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
         
         if current_template:
             # Handle embedded labels (e.g., "Title\nActual title text")
-            if para_stripped.upper().startswith("TITLE\n") or para_stripped.upper().startswith("TITLE:\n"):
+            if _is_label_start(para_stripped.upper(), TITLE_LABELS):
                 current_field = "title"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -484,7 +572,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                     if rest:
                         current_template.title = rest
                 continue
-            elif para_stripped.upper().startswith("BODY\n") or para_stripped.upper().startswith("BODY:\n"):
+            elif _is_label_start(para_stripped.upper(), BODY_LABELS):
                 current_field = "body"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -492,7 +580,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                     if rest:
                         current_template.body = rest
                 continue
-            elif para_stripped.upper().startswith("CTA\n") or para_stripped.upper().startswith("CTA:\n"):
+            elif _is_label_start(para_stripped.upper(), CTA_LABELS):
                 current_field = "cta"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -502,30 +590,30 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                 continue
             
             # Handle standalone field labels
-            if para_upper == "TITLE" or para_upper == "TITLE:":
+            if _is_standalone_label(para_upper, TITLE_LABELS):
                 current_field = "title"
                 continue
-            elif para_upper.startswith("TITLE:") or para_upper.startswith("TITLE "):
+            elif _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS) is not None:
                 current_field = "title"
-                rest = para_stripped[6:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS)
                 if rest:
                     current_template.title = rest
                 continue
-            elif para_upper == "BODY" or para_upper == "BODY:":
+            elif _is_standalone_label(para_upper, BODY_LABELS):
                 current_field = "body"
                 continue
-            elif para_upper.startswith("BODY:") or para_upper.startswith("BODY "):
+            elif _strip_label_prefix(para_stripped, para_upper, BODY_LABELS) is not None:
                 current_field = "body"
-                rest = para_stripped[5:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, BODY_LABELS)
                 if rest:
                     current_template.body = rest
                 continue
-            elif para_upper in ["CTA", "CTA:", "CALL TO ACTION"]:
+            elif _is_standalone_label(para_upper, CTA_LABELS):
                 current_field = "cta"
                 continue
-            elif para_upper.startswith("CTA:") or para_upper.startswith("CTA "):
+            elif _strip_label_prefix(para_stripped, para_upper, CTA_LABELS) is not None:
                 current_field = "cta"
-                rest = para_stripped[4:].strip()
+                rest = _strip_label_prefix(para_stripped, para_upper, CTA_LABELS)
                 if rest:
                     current_template.cta = rest
                 continue
@@ -547,6 +635,36 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
     markers = SECTION_MARKERS.get(marker_key, [f"{section_type.upper()} SMS"])
     
     start = _find_section_start(paragraphs, markers)
+
+    # Fallback for table-based docs where SMS table has "SMS" header then
+    # standalone "LAUNCH" or "REMINDER" sub-headers (not combined like "LAUNCH SMS").
+    if start == -1:
+        target = section_type.upper()  # "LAUNCH" or "REMINDER"
+        # Estonian equivalents
+        et_targets = {"LAUNCH": "LANSSEERIMINE", "REMINDER": "MEELDETULETUS"}
+        et_target = et_targets.get(target, "")
+        for i, para in enumerate(paragraphs):
+            para_upper_stripped = para.upper().strip()
+            # Strip leading $ (Word doc artifact in some templates)
+            if para_upper_stripped.startswith('$'):
+                para_upper_stripped = para_upper_stripped[1:].strip()
+            # Match "SMS", "СМС", or lines starting with "SMS " (e.g., "SMS 18+. sms.%%BrandDomain%%/mensagem")
+            is_sms_header = para_upper_stripped in ("SMS", "СМС") or para_upper_stripped.startswith("SMS ") or para_upper_stripped.startswith("СМС ")
+            if is_sms_header:
+                # Scan ahead for the target sub-header within the SMS block
+                for j in range(i + 1, len(paragraphs)):
+                    line = paragraphs[j].upper().strip()
+                    # Strip leading $ (Word doc artifact)
+                    if line.startswith('$'):
+                        line = line[1:].strip()
+                    # Stop if we hit T&C or ADDITIONAL INFO (left the SMS table)
+                    if line in ("TAC", "T&C", "T&CS", "ADDITIONAL INFO", "NOTEIKUMI", "TINGIMUSED") or line.startswith("CAMPAIGNWIZARD"):
+                        break
+                    if line == target or line == et_target:
+                        start = j
+                        break
+                if start != -1:
+                    break
     if start == -1:
         return None
     
@@ -559,7 +677,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
     # Find end of SMS section
     # Use only exact T&C section headers (not partial matches that could appear in body text)
     tc_exact_headers = [
-        "T&C", "T&CS", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+        "T&C", "T&CS", "TAC", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
         "ΟΡΟΙ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΙΣ", "ΣΗΜΑΝΤΙΚΟΙ ΟΡΟΙ", "ΠΛΗΡΕΙΣ ΟΡΟΙ",
         "TÉRMINOS Y CONDICIONES", "CONDICIONES IMPORTANTES",
         "TERMOS E CONDIÇÕES", "TERMOS IMPORTANTES",
@@ -568,15 +686,27 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         "ALLGEMEINE GESCHÄFTSBEDINGUNGEN", "AGB",
         "VILKÅR OG BETINGELSER", "ALLMÄNNA VILLKOR",
         "TINGIMUSED", "OLULISED TINGIMUSED", "TÄIELIKUD TINGIMUSED",  # Estonian
+        "REEGLID JA TINGIMUSED", "REEGLID", "OLULISED REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI", "SKILYRÐI",  # Icelandic
         "KÄYTTÖEHDOT", "EHDOT",  # Finnish
+        "TERMS & CONDITIONS",  # English variant
+        "ŞARTLAR VE KOŞULLAR", "ŞARTLAR & KOŞULLAR",  # Turkish
+        "ÖNEMLI ŞARTLAR VE KOŞULLAR",  # Turkish (significant)
+        "WARUNKI I ZASADY", "ISTOTNE WARUNKI I ZASADY",  # Polish
+        "BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER OG VILKÅR",  # Norwegian
+        "NOTEIKUMI", "BŪTISKIE NOTEIKUMI",  # Latvian
     ]
     end = len(paragraphs)
     for i, para in enumerate(paragraphs[start + 1:], start + 1):
         para_upper = para.upper().strip()
+        # Strip leading $ (Word doc artifact in some templates)
+        if para_upper.startswith('$'):
+            para_upper = para_upper[1:].strip()
         
         # Check if we hit another major section
-        if section_type == "Launch" and "REMINDER SMS" in para_upper:
+        # Normalize multiple spaces to single for reliable substring matching
+        para_upper_norm = re.sub(r'\s+', ' ', para_upper)
+        if section_type == "Launch" and ("REMINDER SMS" in para_upper_norm or "REMINDER СМС" in para_upper_norm or "SMS - REMINDER" in para_upper_norm or "MEELDETULETUS SMS" in para_upper_norm or "MEELDETULETUS" in para_upper_norm or para_upper_norm in ("REMINDER", "MEELDETULETUS")):
             end = i
             break
         # Only match exact T&C section headers
@@ -595,20 +725,63 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         elif para_for_match.startswith("- ") or para_for_match.startswith("* "):
             para_for_match = para_for_match[2:]
         
+        # Strip leading $ (Word doc artifact in some templates, e.g. "$REMINDER")
+        if para_for_match.startswith('$'):
+            para_for_match = para_for_match[1:].strip()
+        
         para_upper = para_for_match.upper().strip()
         
-        # Skip SMS section headers (e.g., "SMS TEMPLATES", "LAUNCH SMS", "REMINDER SMS")
-        if "SMS" in para_upper and ("LAUNCH" in para_upper or "REMINDER" in para_upper or para_upper == "SMS" or "TEMPLATES" in para_upper):
+        # Check for combined section+variant header (table-based docs)
+        # e.g. "LAUNCH SMS - TemplateA", "REMINDER SMS - TemplateB"
+        # Also handles Estonian: "Näidis" (Template), "Meeldetuletus" (Reminder), "Lansseerimine" (Launch)
+        combined_sms_match = re.search(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
+        has_sms = "SMS" in para_upper or "СМС" in para_upper
+        if combined_sms_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper) and has_sms:
+            if current_template:
+                section.templates.append(current_template)
+            # Extract any inline body after the header line (table-based docs
+            # may have header + body in the same cell separated by newline)
+            inline_body = None
+            variant_end = combined_sms_match.end()
+            rest_after_variant = para_for_match[variant_end:]
+            # Check for newline - body is on the next line within the same paragraph
+            newline_pos = rest_after_variant.find('\n')
+            if newline_pos >= 0:
+                inline_body = rest_after_variant[newline_pos + 1:].strip()
+            else:
+                # No newline - check if there's content directly after variant (e.g. colon+text)
+                rest_stripped = rest_after_variant.strip().lstrip(':').strip()
+                if rest_stripped:
+                    inline_body = rest_stripped
+            current_template = TemplateContent(
+                variant=combined_sms_match.group(1),
+                send_condition=send_condition,
+                body=inline_body if inline_body else None
+            )
+            continue
+
+        # Skip SMS section headers (e.g., "SMS TEMPLATES", "LAUNCH SMS", "REMINDER SMS", "SMS - LAUNCH")
+        # Also handles Cyrillic "СМС" (Russian) and Estonian equivalents
+        if has_sms and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper or para_upper in ("SMS", "СМС") or "TEMPLATES" in para_upper):
+            continue
+
+        # Skip standalone sub-headers (table-based docs: "LAUNCH" or "REMINDER" on their own line)
+        # Also handles Estonian equivalents and $ prefixed headers
+        if para_upper in ("LAUNCH", "REMINDER", "LANSSEERIMINE", "MEELDETULETUS"):
+            continue
+
+        # Skip standalone "BODY" labels (table-based docs have [Body, content] rows)
+        if para_upper == "BODY" or para_upper == "BODY:":
             continue
         
         # Check for template variant marker with inline body (e.g., "Template A: body content...")
-        inline_match = re.match(r"^TEMPLATE\s*([A-F])[:：\s]+(.+)$", para_upper)
+        inline_match = re.match(r"^(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])[:：\s]+(.+)$", para_upper)
         if inline_match:
             if current_template:
                 section.templates.append(current_template)
             variant = inline_match.group(1)
             # Get the actual body content (not uppercased), use stripped version without bullet
-            inline_body_match = re.match(r"^[Tt]emplate\s*[A-F][:：\s]+(.+)$", para_for_match)
+            inline_body_match = re.match(r"^(?:[Tt]emplate|[Mm]all|[Pp]õhi|[Nn]äidis)\s*[A-F][:：\s]+(.+)$", para_for_match)
             if inline_body_match:
                 body_content = inline_body_match.group(1)
             else:
@@ -621,7 +794,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
             continue
         
         # Check for template variant marker without inline body (e.g., "Template A" on its own line)
-        variant_match = re.match(r"^TEMPLATE\s*([A-F])$", para_upper)
+        variant_match = re.match(r"^(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])$", para_upper)
         if variant_match:
             if current_template:
                 section.templates.append(current_template)
@@ -672,18 +845,26 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
     # Localized markers for field detection
     significant_markers = [
         "SIGNIFICANT TERMS", "SIGNIFICANT T",  # English
+        "SIGNIFICANT TERMS & CONDITIONS",  # Variant
+        "SIGNIFICANTTERMS",  # CamelCase (table-based docs)
         "ΣΗΜΑΝΤΙΚΟΙ ΟΡΟΙ", "ΣΗΜΑΝΤΙΚΟΊ ΌΡΟΙ",  # Greek (different accent forms)
         "CONDICIONES IMPORTANTES", "TÉRMINOS IMPORTANTES",  # Spanish
         "TERMOS IMPORTANTES",  # Portuguese
         "TERMINI IMPORTANTI",  # Italian
         "CONDITIONS IMPORTANTES",  # French
         "WICHTIGE BEDINGUNGEN",  # German
-        "OLULISED TINGIMUSED",  # Estonian
+        "OLULISED TINGIMUSED", "OLULISED REEGLID",  # Estonian
         "ОСНОВНЫЕ ПРАВИЛА", "ВАЖНЫЕ УСЛОВИЯ",  # Russian
         "TÄRKEÄT EHDOT",  # Finnish
+        "VIKTIGE BETINGELSER OG VILKÅR", "VIKTIGE BETINGELSER",  # Norwegian
+        "ISTOTNE WARUNKI I ZASADY", "ISTOTNE WARUNKI",  # Polish
+        "ÖNEMLI ŞARTLAR VE KOŞULLAR", "ÖNEMLI ŞARTLAR",  # Turkish
+        "VIGTIGE BETINGELSER OG VILKÅR", "VIGTIGE BETINGELSER",  # Danish
+        "BŪTISKIE NOTEIKUMI",  # Latvian
     ]
     full_terms_markers = [
-        "TERMS AND CONDITIONS", "FULL TERMS", "T&CS", "T&C",  # English
+        "TERMS AND CONDITIONS", "TERMS & CONDITIONS", "FULL TERMS", "T&CS", "T&C",  # English
+        "TERMSANDCONDITIONS",  # CamelCase (table-based docs)
         "ΠΛΗΡΕΙΣ ΟΡΟΙ", "ΠΛΉΡΕΙΣ ΌΡΟΙ", "ΟΡΟΙ ΚΑΙ ΠΡΟΫΠΟΘΕΣΕΙΣ",  # Greek
         "TÉRMINOS Y CONDICIONES", "CONDICIONES COMPLETAS",  # Spanish
         "TERMOS E CONDIÇÕES", "TERMOS COMPLETOS",  # Portuguese
@@ -691,15 +872,28 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
         "CONDITIONS GÉNÉRALES",  # French
         "ALLGEMEINE GESCHÄFTSBEDINGUNGEN", "AGB",  # German
         "TÄIELIKUD TINGIMUSED", "TINGIMUSED",  # Estonian
+        "REEGLID JA TINGIMUSED", "REEGLID",  # Estonian (alt)
         "REGLUR OG SKILYRÐI",  # Icelandic
         "ПОЛНЫЕ ПРАВИЛА", "ПРАВИЛА И УСЛОВИЯ",  # Russian
         "TÄYDELLISET EHDOT", "KÄYTTÖEHDOT",  # Finnish
+        "BETINGELSER OG VILKÅR",  # Norwegian
+        "WARUNKI I ZASADY",  # Polish
+        "ŞARTLAR VE KOŞULLAR", "ŞARTLAR & KOŞULLAR",  # Turkish
+        "VILKÅR OG BETINGELSER",  # Danish
+        "NOTEIKUMI",  # Latvian
     ]
+
+    # Stop markers: sections that come after T&C
+    tc_stop_markers = ["ADDITIONAL INFO", "ADDITIONAL INFORMATION"]
     
     for para in paragraphs[start:]:
         para_stripped = para.strip()
         para_upper = para_stripped.upper()
         
+        # Stop at ADDITIONAL INFO section (comes after T&C in table-based docs)
+        if any(para_upper.startswith(m) for m in tc_stop_markers):
+            break
+
         # Check for significant terms section
         if any(marker in para_upper for marker in significant_markers):
             current_field = "significant_terms"

@@ -25,3 +25,6 @@ extract_hashes.py
 # Temp files
 *.tmp
 *.bak
+
+# Streamlit secrets — now intentionally empty (OAuth config moved to oauth_config.py)
+# Kept here as a reminder; the file is safe to commit but contains no secrets.

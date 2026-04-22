@@ -34,6 +34,7 @@ from config import (
 from word_parser import parse_documents_from_folder, ParsedDocument
 from xml_generator import generate_cms_packages
 from report_generator import build_report_from_session
+from auth import require_auth
 import re
 import difflib
 import xml.etree.ElementTree as ET
@@ -120,20 +121,48 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
         if not code:
             return code
 
+        # Handle BT-XX brand prefix codes (e.g., BT-PT -> pt, BT-ES -> es)
+        if code.startswith("bt-") and len(code) > 3:
+            suffix = code[3:]  # Get the part after "bt-"
+            # Map common suffixes to langdetect codes
+            bt_suffix_map = {
+                "pt": "pt",  # Portuguese
+                "br": "pt",  # Brazilian Portuguese
+                "es": "es",  # Spanish
+                "it": "it",  # Italian
+                "fi": "fi",  # Finnish
+                "no": "no",  # Norwegian
+                "dk": "da",  # Danish
+                "da": "da",  # Danish
+                "pl": "pl",  # Polish
+                "lv": "lv",  # Latvian
+                "ee": "et",  # Estonian
+                "et": "et",  # Estonian
+                "gr": "el",  # Greek
+                "el": "el",  # Greek
+                "en": "en",  # English
+            }
+            return bt_suffix_map.get(suffix, suffix)
+
         # Handle cms variants like es-ar-ba, ru-ee, en-pe
         if "-" in code:
             return code.split("-", 1)[0]
 
         # Market codes that represent Spanish/Portuguese content
-        if code in {"arg", "cl", "co", "mx", "pe", "py"}:
+        if code in {"arg", "ar", "cl", "co", "col", "mx", "pe", "py", "arg_py"}:
             return "es"
-        if code == "br":
+        if code in {"br", "pt"}:
             return "pt"
+        if code == "dk":
+            return "da"
 
         # Workspace-specific aliases
         aliases = {
             "gr": "el",  # Greek
             "no": "no",  # Norwegian
+            "et_et": "et",  # Estonian for Estonia
+            "et_ru": "ru",  # Russian for Estonia
+            "pe_en": "en",  # English for Peru
         }
         return aliases.get(code, code)
 
@@ -908,8 +937,7 @@ def count_safe_fixes_for_language(selected_lang: str, selected_doc: ParsedDocume
 
     def count_on_widget_key(widget_key: str, fallback_text: str) -> None:
         nonlocal fixable_fields
-        fix_buffer_key = f"fix_buffer_{widget_key}"
-        current_text = st.session_state.get(fix_buffer_key, st.session_state.get(widget_key, fallback_text or ""))
+        current_text = get_effective_widget_value(widget_key, fallback_text or "")
         replacements, _ = get_safe_placeholder_replacements(current_text)
         if not replacements:
             return
@@ -1440,14 +1468,55 @@ def detect_offer_type(parsed_docs: list) -> dict:
     task_type = None
     task_confidence = "low"
     
+    # Pre-scan: detect if reward is cash (withdrawable) vs bonus
+    # Uses broad payout-description language that correctly identifies cash variants
+    is_cash = any(kw in all_text_lower for kw in [
+        "withdrawable cash", "paid as cash", "paid out as cash",
+        "winnings are paid as cash", "winnings paid as cash",
+        "cash stake", "refund your cash",
+        "%%cashrewardamount%%", "%%cashrewardstake%%",
+        "efectivo", "μετρητά",
+    ])
+
+    # For Risk-Free Bets, broad is_cash triggers false positives (both Bonus
+    # and Cash RFB templates use payout language mentioning "cash" in some
+    # languages). Use explicit reward-naming phrases for RFB distinction only.
+    is_cash_rfb = any(kw in all_text_lower for kw in [
+        "cash risk-free bet", "cash risk free bet",
+        "cash risk-free", "cash riskfree",
+    ])
+
+    # Pre-scan: detect if content references settlement explicitly
+    has_settlement_language = any(kw in all_text_lower for kw in [
+        "settlement", "settled", "settles",
+        "must settle", "bet settles", "has settled",
+        "once settled", "after settlement",
+        "your bet is settled", "bet has been settled",
+    ])
+
+    # Count reward placeholders for tie-breaking when multiple are present
+    sbrewardstake_count = all_text_lower.count("%%sbrewardstake%%")
+    nroffreespins_count = all_text_lower.count("%%nroffreespins%%") + all_text_lower.count("%%freespingames%%")
+
+    # Count task placeholders for tie-breaking (cross-sell offers may have both)
+    # Note: %%wagertaskon%% is a substring of %%sbwagertaskon%%, so subtract SB count
+    sbwagertaskon_count = all_text_lower.count("%%sbwagertaskon%%")
+    wagertaskon_exclusive = all_text_lower.count("%%wagertaskon%%") - sbwagertaskon_count
+
     # Check for placeholders first (highest confidence)
     if "%%depositfulfillmentamount%%" in all_text_lower or "%%depositexcludedpayments%%" in all_text_lower:
-        task_type = "DepositTask"
+        task_type = "Deposit"
         task_confidence = "high"
-    elif "%%sbwagertaskon%%" in all_text_lower or "%%taskminimumodds%%" in all_text_lower:
-        task_type = "PlaceBetWithSettlement"
+    elif sbwagertaskon_count > 0 or "%%taskminimumodds%%" in all_text_lower:
+        # Sportsbook bet placeholder found — but check if casino wager is dominant
+        if wagertaskon_exclusive > sbwagertaskon_count:
+            task_type = "Wager"
+        elif has_settlement_language:
+            task_type = "PlaceBetWithSettlement"
+        else:
+            task_type = "PlaceBetWithoutSettlement"
         task_confidence = "high"
-    elif "%%wagertaskon%%" in all_text_lower and "%%sbwagertaskon%%" not in all_text_lower:
+    elif "%%wagertaskon%%" in all_text_lower and sbwagertaskon_count == 0:
         task_type = "Wager"
         task_confidence = "high"
     elif "%%netlossgameplay%%" in all_text_lower:
@@ -1458,10 +1527,13 @@ def detect_offer_type(parsed_docs: list) -> dict:
         task_confidence = "high"
     # Keyword detection (medium confidence)
     elif any(kw in all_text_lower for kw in ["deposit", "deposita", "déposer", "einzahlung", "talletaa"]):
-        task_type = "DepositTask"
+        task_type = "Deposit"
         task_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["bet on", "place a bet", "apuesta", "wager on sports", "sportsbook bet"]):
-        task_type = "PlaceBetWithSettlement"
+        if has_settlement_language:
+            task_type = "PlaceBetWithSettlement"
+        else:
+            task_type = "PlaceBetWithoutSettlement"
         task_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["wager", "play through", "bet through"]):
         task_type = "Wager"
@@ -1473,44 +1545,45 @@ def detect_offer_type(parsed_docs: list) -> dict:
     # Detect Reward Type
     reward_type = None
     reward_confidence = "low"
-    is_cash = False  # Track if reward is cash vs bonus
     
-    # Check for placeholders first
-    if "%%nroffreespins%%" in all_text_lower or "%%freespingames%%" in all_text_lower:
-        # Determine if cash or bonus free spins
-        if any(kw in all_text_lower for kw in ["cash free spin", "cash spin", "free cash spin", "withdrawable", "efectivo", "μετρητά"]):
-            reward_type = "CashFreespin"
-            is_cash = True
+    # When both free-bet and free-spin placeholders exist, use the dominant one
+    if sbrewardstake_count > 0 and nroffreespins_count > 0:
+        if sbrewardstake_count >= nroffreespins_count:
+            # Free Bet is dominant
+            if any(kw in all_text_lower for kw in ["risk-free", "risk free"]):
+                reward_type = "CashRiskFreeBet" if is_cash_rfb else "BonusRiskFreeBet"
+            else:
+                reward_type = "CashFreeBet" if is_cash else "BonusFreeBet"
+            reward_confidence = "high"
         else:
-            reward_type = "Freespin"
+            # Free Spins is dominant
+            reward_type = "CashFreespin" if is_cash else "Freespin"
+            reward_confidence = "high"
+    elif sbrewardstake_count > 0:
+        # Free bet reward — for RFB use is_cash_rfb, for regular free bet use is_cash
+        if any(kw in all_text_lower for kw in ["risk-free", "risk free"]):
+            reward_type = "CashRiskFreeBet" if is_cash_rfb else "BonusRiskFreeBet"
+        else:
+            reward_type = "CashFreeBet" if is_cash else "BonusFreeBet"
+        reward_confidence = "high"
+    elif nroffreespins_count > 0:
+        reward_type = "CashFreespin" if is_cash else "Freespin"
         reward_confidence = "high"
     elif "%%bonusamount%%" in all_text_lower:
         reward_type = "BonusMoney"
         reward_confidence = "high"
     elif "%%cashrewardamount%%" in all_text_lower:
         reward_type = "CashMoney"
-        is_cash = True
-        reward_confidence = "high"
-    elif "%%sbrewardstake%%" in all_text_lower:
-        # Free bet reward
-        if any(kw in all_text_lower for kw in ["risk-free", "risk free"]):
-            reward_type = "RiskFreeBet" if not is_cash else "CashRiskFreeBet"
-        else:
-            reward_type = "FreeBet" if not is_cash else "CashFreeBet"
         reward_confidence = "high"
     # Keyword detection
-    elif any(kw in all_text_lower for kw in ["free spin", "freespin", "giros gratis", "free cash spin"]):
-        if "cash" in all_text_lower or "efectivo" in all_text_lower or "withdrawable" in all_text_lower:
-            reward_type = "CashFreespin"
-            is_cash = True
-        else:
-            reward_type = "Freespin"
-        reward_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["free bet", "freebet", "apuesta gratis"]):
-        if "risk" in all_text_lower:
-            reward_type = "RiskFreeBet"
+        if any(kw in all_text_lower for kw in ["risk-free", "risk free"]):
+            reward_type = "CashRiskFreeBet" if is_cash_rfb else "BonusRiskFreeBet"
         else:
-            reward_type = "FreeBet"
+            reward_type = "CashFreeBet" if is_cash else "BonusFreeBet"
+        reward_confidence = "medium"
+    elif any(kw in all_text_lower for kw in ["free spin", "freespin", "giros gratis", "free cash spin"]):
+        reward_type = "CashFreespin" if is_cash else "Freespin"
         reward_confidence = "medium"
     elif any(kw in all_text_lower for kw in ["bonus money", "bonus cash", "dinero de bono"]):
         reward_type = "BonusMoney"
@@ -1530,12 +1603,12 @@ def detect_offer_type(parsed_docs: list) -> dict:
             recommended_image = "Cash Free Spin (Casino)"
         elif reward_type == "Freespin":
             recommended_image = "Bonus Free Spin (Casino)"
-        elif reward_type in ["FreeBet", "CashFreeBet"]:
+        elif reward_type in ["BonusFreeBet", "CashFreeBet"]:
             if is_cash or reward_type == "CashFreeBet":
                 recommended_image = "Cash Free Bet (Sportsbook)"
             else:
                 recommended_image = "Bonus Free Bet (Sportsbook)"
-        elif reward_type in ["RiskFreeBet", "CashRiskFreeBet"]:
+        elif reward_type in ["BonusRiskFreeBet", "CashRiskFreeBet"]:
             if is_cash:
                 recommended_image = "Cash Risk Free Bet (Sportsbook)"
             else:
@@ -1596,32 +1669,35 @@ def check_template_consistency(parsed_docs: list) -> dict:
         
         report["by_language"][lang] = variants
     
-    # Compare all languages against the first one (reference)
-    if len(parsed_docs) > 1:
-        ref_lang = parsed_docs[0].language_code
-        ref_variants = report["by_language"][ref_lang]
-        
-        for lang, variants in report["by_language"].items():
-            if lang == ref_lang:
-                continue
-            
-            for section in ["launch_oms", "reminder_oms", "reward_oms", "launch_sms", "reminder_sms"]:
-                ref_set = ref_variants[section]
+    # Build expected variant set per section using majority voting
+    # A variant is "expected" if >50% of languages have it
+    if len(report["by_language"]) > 1:
+        total_langs = len(report["by_language"])
+        threshold = total_langs / 2
+
+        for section in ["launch_oms", "reminder_oms", "reward_oms", "launch_sms", "reminder_sms"]:
+            # Count how many languages have each variant
+            variant_counts: dict[str, int] = {}
+            for variants in report["by_language"].values():
+                for v in variants[section]:
+                    variant_counts[v] = variant_counts.get(v, 0) + 1
+
+            expected = {v for v, count in variant_counts.items() if count > threshold}
+
+            for lang, variants in report["by_language"].items():
                 lang_set = variants[section]
-                
-                missing = ref_set - lang_set
-                extra = lang_set - ref_set
-                
+                missing = expected - lang_set
+                extra = lang_set - expected
+
+                section_name = section.replace("_", " ").title()
                 if missing:
                     report["is_consistent"] = False
-                    section_name = section.replace("_", " ").title()
                     report["issues"].append(f"❌ {lang}: Missing {section_name} variants: {', '.join(sorted(missing))}")
-                
+
                 if extra:
                     report["is_consistent"] = False
-                    section_name = section.replace("_", " ").title()
                     report["issues"].append(f"⚠️ {lang}: Extra {section_name} variants: {', '.join(sorted(extra))}")
-    
+
     return report
 
 
@@ -1974,6 +2050,8 @@ st.set_page_config(
     page_icon=str(brand_favicon_black_path),
     layout="wide",
 )
+
+require_auth()
 
 # Custom CSS
 st.markdown("""
@@ -3222,7 +3300,8 @@ def main():
 
                 # Auto-apply detection results immediately (no button needed)
                 if auto_task or auto_reward or auto_image:
-                    # Check if these are new values that need a rerun
+                    # Rerun when detection changed OR current sidebar values are out of sync.
+                    # This ensures auto-detection actually updates visible selections.
                     needs_rerun = (
                         (auto_task and st.session_state.get("detected_task_type") != auto_task) or
                         (auto_reward and st.session_state.get("detected_reward_type") != auto_reward) or
@@ -3496,7 +3575,7 @@ def main():
                             sms_body = template.body or ""
                             sms_key = f"sms_{selected_lang}_{idx}_{sms_type}_{template.variant}"
                             sms_fix_buffer = f"fix_buffer_{sms_key}"
-                            sms_effective = st.session_state.get(sms_fix_buffer, st.session_state.get(sms_key, sms_body))
+                            sms_effective = get_effective_widget_value(sms_key, sms_body)
 
                             char_count, color, char_msg = get_sms_char_info(sms_effective)
                             invalid_placeholders = validate_placeholders(sms_effective)
@@ -3576,9 +3655,9 @@ def main():
                             body_fix_buffer = f"fix_buffer_{body_key}"
                             cta_fix_buffer = f"fix_buffer_{cta_key}"
 
-                            effective_title = st.session_state.get(title_fix_buffer, st.session_state.get(title_key, oms_title))
-                            effective_body = st.session_state.get(body_fix_buffer, st.session_state.get(body_key, oms_body))
-                            effective_cta = st.session_state.get(cta_fix_buffer, st.session_state.get(cta_key, oms_cta))
+                            effective_title = get_effective_widget_value(title_key, oms_title)
+                            effective_body = get_effective_widget_value(body_key, oms_body)
+                            effective_cta = get_effective_widget_value(cta_key, oms_cta)
                             
                             all_text = effective_title + " " + effective_body + " " + effective_cta
                             invalid_placeholders = validate_placeholders(all_text)
@@ -3731,9 +3810,10 @@ def main():
                         set_editor_value(sig_key, edited_sig)
                         sig_invalid = validate_placeholders(edited_sig)
                         if sig_invalid:
-                                icon = "⚠️" if sig_invalid else "✅"
-                                render_invalid_placeholder_assistant(
-                                    field_label=f"{icon} Significant Terms",
+                            render_invalid_placeholder_assistant(
+                                field_label="⚠️ Significant Terms",
+                                text=edited_sig,
+                                fix_buffer_key=sig_fix_buffer,
                                 button_key=f"fix_{sig_key}",
                                 language_code=selected_lang,
                                 tracking_field_label="T&C Significant Terms",
@@ -3746,9 +3826,8 @@ def main():
                         set_editor_value(full_key, edited_full)
                         full_invalid = validate_placeholders(edited_full)
                         if full_invalid:
-                            icon = "⚠️" if full_invalid else "✅"
                             render_invalid_placeholder_assistant(
-                                field_label=f"{icon} Full T&Cs",
+                                field_label="⚠️ Full T&Cs",
                                 text=edited_full,
                                 fix_buffer_key=full_fix_buffer,
                                 button_key=f"fix_{full_key}",

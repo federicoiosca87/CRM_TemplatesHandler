@@ -3,8 +3,10 @@ OAuth 2.0 authentication for CRM Template Generator (Streamlit).
 
 Flow: Authorization Code + PKCE against a Betsson IdentityServer instance.
 
-Configuration is loaded from oauth_config.py, keyed by the APP_ENV environment
-variable (defaults to "local"). No secrets or env vars are needed beyond APP_ENV.
+Configuration is loaded from oauth_config.py. Environment resolution order:
+  1. ENVIRONMENT env var — injected by bego into every deployed container
+  2. APP_ENV env var     — explicit override for direct Docker builds
+  3. "local"             — fallback for plain `streamlit run`
 
 Usage (in app.py, immediately after st.set_page_config):
     from auth import require_auth
@@ -28,14 +30,18 @@ from oauth_config import get_oauth_config
 #
 # Maps OAuth `state` token → PKCE code verifier.
 # Lives in module memory, so it survives the browser round-trip to the
-# external OAuth provider and back.  Works correctly for single-instance
-# deployments (local and containerised QA/prod).
+# external OAuth provider and back.
+#
+# NOTE: This works correctly only on single-instance deployments. The app is
+# intentionally deployed with replicas: 1 (see manifest.yaml). Do not scale
+# to multiple replicas without replacing this cache with a shared store or
+# enabling sticky sessions.
 # ---------------------------------------------------------------------------
 _pkce_cache: dict[str, str] = {}
 
 
 def _get_config() -> dict:
-    """Load OAuth configuration from oauth_config.py (keyed by APP_ENV)."""
+    """Load OAuth configuration from oauth_config.py (ENVIRONMENT → APP_ENV → local)."""
     return get_oauth_config()
 
 

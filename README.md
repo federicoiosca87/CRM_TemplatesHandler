@@ -137,6 +137,8 @@ The app will open in your browser at http://localhost:8501
 
 ### Docker
 
+> **Single-replica requirement:** The OAuth PKCE flow stores state in process memory. The app must run as a single replica — do not scale horizontally without replacing the in-memory PKCE cache with a shared store. This is enforced in `manifest.yaml` (`replicas: 1`).
+
 Build the image:
 
 ```bash
@@ -155,17 +157,7 @@ Open http://localhost:8501.
 
 > **Note:** Streamlit logs port `8080` (the internal container port) in the console — ignore it. The app is always accessible on the host port you mapped, `8501` in the command above.
 
-Alternatively, pass OAuth config via environment variables (used in deployed environments):
-
-```bash
-docker run --rm -p 8501:8080 \
-  -e OAUTH_AUTHORITY="https://your-identity-server" \
-  -e OAUTH_CLIENT_ID="Tools.CRM_TemplateHandler" \
-  -e OAUTH_CLIENT_SECRET="" \
-  -e OAUTH_SCOPES="openid profile IdentityServerApi" \
-  -e OAUTH_REDIRECT_URI="http://localhost:8501" \
-  crm-templates-handler
-```
+> **OAuth configuration** is resolved automatically from `oauth_config.py` based on the active environment (`ENVIRONMENT` env var injected by bego, or `APP_ENV` for direct Docker builds). The `OAUTH_*` environment variables shown in older docs are **not supported** — do not pass them to `docker run`. To use different OAuth settings, update `oauth_config.py` directly.
 
 ### Steps:
 

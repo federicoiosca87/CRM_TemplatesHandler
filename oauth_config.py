@@ -19,7 +19,7 @@ _CONFIGS: dict[str, dict] = {
         "client_id": "POC.CRM.TemplateHandler",
         "client_secret": "",
         "scopes": "openid profile email",
-        "redirect_uri": "http://localhost:8080",
+        "redirect_uri": "http://localhost:8501",
     },
     "test": {
         "authority": "https://identity-server.test.betsson.tech",

@@ -26,5 +26,5 @@ extract_hashes.py
 *.tmp
 *.bak
 
-# Streamlit secrets (contains OAuth credentials — never commit)
-.streamlit/secrets.toml
+# Streamlit secrets — now intentionally empty (OAuth config moved to oauth_config.py)
+# Kept here as a reminder; the file is safe to commit but contains no secrets.

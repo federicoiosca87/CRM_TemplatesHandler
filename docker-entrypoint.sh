@@ -3,15 +3,9 @@ set -e
 
 mkdir -p /app/.streamlit
 
+# Streamlit requires secrets.toml to exist; OAuth config is in oauth_config.py.
 if [ ! -f /app/.streamlit/secrets.toml ]; then
-    cat > /app/.streamlit/secrets.toml << SECRETS
-[oauth]
-authority      = "${OAUTH_AUTHORITY}"
-client_id      = "${OAUTH_CLIENT_ID}"
-client_secret  = "${OAUTH_CLIENT_SECRET}"
-scopes         = "${OAUTH_SCOPES}"
-redirect_uri   = "${OAUTH_REDIRECT_URI}"
-SECRETS
+    touch /app/.streamlit/secrets.toml
 fi
 
 exec streamlit run app.py \

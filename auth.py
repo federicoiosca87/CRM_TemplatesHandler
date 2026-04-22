@@ -3,8 +3,8 @@ OAuth 2.0 authentication for CRM Template Generator (Streamlit).
 
 Flow: Authorization Code + PKCE against a Betsson IdentityServer instance.
 
-Configuration is loaded from .streamlit/secrets.toml under the [oauth] section.
-See .streamlit/secrets.toml.example for the required keys.
+Configuration is loaded from oauth_config.py, keyed by the APP_ENV environment
+variable (defaults to "local"). No secrets or env vars are needed beyond APP_ENV.
 
 Usage (in app.py, immediately after st.set_page_config):
     from auth import require_auth
@@ -21,6 +21,8 @@ import urllib.parse
 import requests
 import streamlit as st
 
+from oauth_config import get_oauth_config
+
 # ---------------------------------------------------------------------------
 # Server-side PKCE verifier cache
 #
@@ -33,15 +35,8 @@ _pkce_cache: dict[str, str] = {}
 
 
 def _get_config() -> dict:
-    """Read OAuth configuration from Streamlit secrets ([oauth] section)."""
-    oauth = st.secrets.get("oauth", {})
-    return {
-        "authority": oauth.get("authority", ""),
-        "client_id": oauth.get("client_id", ""),
-        "client_secret": oauth.get("client_secret", ""),
-        "scopes": oauth.get("scopes", "openid profile"),
-        "redirect_uri": oauth.get("redirect_uri", "http://localhost:8501"),
-    }
+    """Load OAuth configuration from oauth_config.py (keyed by APP_ENV)."""
+    return get_oauth_config()
 
 
 def _build_authorization_url() -> str:

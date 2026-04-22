@@ -37,9 +37,10 @@ jobs:
           token: ${{ secrets.OBG_GHACTION_TOKEN }}
           path: ${{ env.CI_DIR }}
 
-      - name: Deploy to test
-        if: inputs.environment == 'test'
+      - name: Deploy
         uses: BetssonGroup/bego-action@d5267021db21f94333a3abe7bd78e4dd2882068c # v8.0.1
+        env:
+          APP_ENV: ${{ inputs.environment }}
         with:
           username: ${{ secrets.BEGO_USER }}
           password: ${{ secrets.BEGO_PASSWORD }}
@@ -51,22 +52,5 @@ jobs:
           workdir: ${{ env.CI_DIR }}
           command: >
             bego version &&
-            bego deploy test --ignore-already-deployed --wait 15m
-            --ignore-git-check --op-in-prog-mitigation --verbose -l debug
-
-      - name: Deploy to qa
-        if: inputs.environment == 'qa'
-        uses: BetssonGroup/bego-action@d5267021db21f94333a3abe7bd78e4dd2882068c # v8.0.1
-        with:
-          username: ${{ secrets.BEGO_USER }}
-          password: ${{ secrets.BEGO_PASSWORD }}
-          test-rancher-token: ${{ secrets.BEGO_TIERS_TEST_RANCHERTOKEN }}
-          prod-rancher-token: ${{ secrets.BEGO_TIERS_PROD_RANCHERTOKEN }}
-          version: ${{ vars.BEGO_VERSION }}
-          app-id: ${{ vars.BEGO_RELEASE_DOWNLOADER_APPID }}
-          private-key: ${{ secrets.BEGO_RELEASE_DOWNLOADER_PRIVATEKEY }}
-          workdir: ${{ env.CI_DIR }}
-          command: >
-            bego version &&
-            bego deploy qa --ignore-already-deployed --wait 15m
+            bego deploy ${{ inputs.environment }} --ignore-already-deployed --wait 15m
             --ignore-git-check --op-in-prog-mitigation --verbose -l debug

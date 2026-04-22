@@ -10,7 +10,6 @@
 .DS_Store
 **/*.tmp
 **/*.bak
-.streamlit/secrets.toml
 .streamlit/secrets.toml.example
 test_*.py
 extract_hashes.py

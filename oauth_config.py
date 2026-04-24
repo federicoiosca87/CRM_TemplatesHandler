@@ -29,7 +29,7 @@ _CONFIGS: dict[str, dict] = {
         "redirect_uri": "https://crm-templates-handler-test.apps.igaming-test.euc1.betsson.tech",
     },
     "qa": {
-        "authority": "https://identity-server.test.betsson.tech",
+        "authority": "https://identity-server.qa.betsson.tech",
         "client_id": "POC.CRM.TemplateHandler",
         "client_secret": "",
         "scopes": "openid profile email",

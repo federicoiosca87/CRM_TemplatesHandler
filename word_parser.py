@@ -50,7 +50,7 @@ class TemplateContent:
     body: Optional[str] = None
     cta: Optional[str] = None
     cta_mobile: Optional[str] = None
-    send_condition: str = "NotOptedIn"  # NotOptedIn (Launch) or JoinedCampaign (Reminder)
+    send_condition: str = "JoinedCampaign"  # JoinedCampaign (Launch) or NotOptedIn (Reminder)
 
 
 @dataclass
@@ -311,7 +311,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
         return None
     
     # Map section type to SendCondition
-    send_condition = "NotOptedIn" if section_type == "Launch" else "JoinedCampaign"
+    send_condition = "JoinedCampaign" if section_type == "Launch" else "NotOptedIn"
     
     section = OmsSection(section_type=section_type)
     current_template = None
@@ -669,7 +669,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         return None
     
     # Map section type to SendCondition
-    send_condition = "NotOptedIn" if section_type == "Launch" else "JoinedCampaign"
+    send_condition = "JoinedCampaign" if section_type == "Launch" else "NotOptedIn"
     
     section = SmsSection(section_type=section_type)
     current_template = None

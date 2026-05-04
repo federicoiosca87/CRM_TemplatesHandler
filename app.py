@@ -1926,6 +1926,21 @@ def get_effective_widget_value(widget_key: str, fallback_value: str) -> str:
     return get_editor_value(widget_key, fallback_value)
 
 
+def _append_sms_link(body: str, link: str) -> str:
+    """Append an SMS link after 'T&Cs apply.' if not already present."""
+    if not link or link in body:
+        return body
+    # Try to insert after "T&Cs apply." (case-insensitive)
+    import re as _re
+    pattern = _re.compile(r"(T&Cs?\s+apply\.?)", _re.IGNORECASE)
+    match = pattern.search(body)
+    if match:
+        insert_pos = match.end()
+        return body[:insert_pos] + " " + link + body[insert_pos:]
+    # Fallback: append at the end
+    return body.rstrip() + " " + link
+
+
 def build_effective_parsed_docs(parsed_docs: list[ParsedDocument]) -> list[ParsedDocument]:
     """Clone parsed docs and apply in-app edits from session state for consistent QA checks."""
     effective_docs = copy.deepcopy(parsed_docs)
@@ -1933,16 +1948,23 @@ def build_effective_parsed_docs(parsed_docs: list[ParsedDocument]) -> list[Parse
     for doc in effective_docs:
         lang = doc.language_code
 
+        # SMS link to auto-append after "T&Cs apply."
+        sms_link = st.session_state.get(f"sms_link_{lang}", "").strip()
+
         sms_idx = 0
         if doc.launch_sms:
             for template in doc.launch_sms.templates:
                 key = f"sms_{lang}_{sms_idx}_Launch_{template.variant}"
                 template.body = get_effective_widget_value(key, template.body or "")
+                if sms_link:
+                    template.body = _append_sms_link(template.body, sms_link)
                 sms_idx += 1
         if doc.reminder_sms:
             for template in doc.reminder_sms.templates:
                 key = f"sms_{lang}_{sms_idx}_Reminder_{template.variant}"
                 template.body = get_effective_widget_value(key, template.body or "")
+                if sms_link:
+                    template.body = _append_sms_link(template.body, sms_link)
                 sms_idx += 1
 
         oms_idx = 0
@@ -3559,6 +3581,15 @@ def main():
                 
                 with col1:
                     st.subheader("📱 SMS Templates")
+
+                    sms_link_key = f"sms_link_{selected_lang}"
+                    sms_link = st.text_input(
+                        "🔗 SMS Link (auto-appended after \"T&Cs apply.\")",
+                        key=sms_link_key,
+                        placeholder="e.g., sms.%%BrandDomain%%/xyz",
+                        help="Enter once per language — will be appended to all SMS bodies after 'T&Cs apply.'",
+                    )
+
                     all_sms_templates = []
                     if selected_doc.launch_sms:
                         for t in selected_doc.launch_sms.templates:

@@ -384,7 +384,11 @@ class CmsXmlGenerator:
                 continue
             
             send_condition = template.send_condition
-            key = f"{content_type}.{self.offer_key}-{send_condition}-Template{template.variant}"
+            variant_suffix = f"-Template{template.variant}"
+            if send_condition.endswith(variant_suffix):
+                key = f"{content_type}.{self.offer_key}-{send_condition}"
+            else:
+                key = f"{content_type}.{self.offer_key}-{send_condition}{variant_suffix}"
             
             body_text = template.body or ""
             if len(body_text) > SMS_MAX_LENGTH:
@@ -422,7 +426,11 @@ class CmsXmlGenerator:
                 continue
             
             send_condition = template.send_condition
-            key = f"{content_type}.{self.offer_key}-{send_condition}-Template{template.variant}"
+            variant_suffix = f"-Template{template.variant}"
+            if send_condition.endswith(variant_suffix):
+                key = f"{content_type}.{self.offer_key}-{send_condition}"
+            else:
+                key = f"{content_type}.{self.offer_key}-{send_condition}{variant_suffix}"
             
             content_items = [
                 ("Title", "Title", template.title or ""),

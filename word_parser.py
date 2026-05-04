@@ -11,6 +11,47 @@ from typing import Optional
 from docx import Document
 from config import SECTION_MARKERS, TEMPLATE_VARIANTS, LANGUAGE_MAPPING
 
+_BBCODE_TAG_RE = re.compile(r'\[/?[biu]\]')
+
+
+def _strip_bbcode(text: str) -> str:
+    """Remove BBCode formatting tags for plain-text matching."""
+    return _BBCODE_TAG_RE.sub('', text)
+
+
+def _paragraph_to_bbcode(para) -> str:
+    """Convert a Word paragraph's runs to text with BBCode formatting.
+
+    Preserves explicit bold, italic, and underline formatting applied in Word
+    as [b], [i], [u] BBCode tags.  Style-inherited formatting (e.g. a heading
+    that is bold by virtue of its style) is ignored so that section headers
+    remain plain text for matching purposes.
+    """
+    if not para.runs:
+        return para.text.strip()
+
+    parts = []
+    for run in para.runs:
+        text = run.text
+        if not text:
+            continue
+        # Wrap with BBCode for explicitly applied formatting only
+        if run.underline:
+            text = f"[u]{text}[/u]"
+        if run.italic is True:
+            text = f"[i]{text}[/i]"
+        if run.bold is True:
+            text = f"[b]{text}[/b]"
+        parts.append(text)
+
+    result = "".join(parts).strip()
+
+    # Consolidate adjacent same-type tags: [b]x[/b][b]y[/b] → [b]xy[/b]
+    for tag in ('b', 'i', 'u'):
+        result = result.replace(f"[/{tag}][{tag}]", "")
+
+    return result
+
 # Localized field labels (Title / Body / CTA equivalents)
 # Icelandic: Titill (Title), Meginmál (Body)
 # Estonian: Pealkiri (Title)
@@ -143,7 +184,7 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
     # Also include table-cell text because many templates are authored in tables.
     paragraphs = []
     for para in doc.paragraphs:
-        text = para.text.strip()
+        text = _paragraph_to_bbcode(para)
         if text:
             # Check if this is a list item (bullet or numbered)
             is_list_item = False
@@ -173,18 +214,19 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
             seen_in_row = set()
             for cell in row.cells:
                 for para in cell.paragraphs:
-                    text = para.text.strip()
+                    text = _paragraph_to_bbcode(para)
                     # Normalize non-breaking spaces
                     text = text.replace("\xa0", " ")
                     if not text:
                         continue
                     # Skip CMS metadata rows (e.g. "CampaignWizardOmsTemplate.Deposit-...")
-                    if _CMS_METADATA_RE.match(text):
+                    plain_text = _strip_bbcode(text)
+                    if _CMS_METADATA_RE.match(plain_text):
                         continue
                     # Deduplicate merged cells within the same row
-                    if text in seen_in_row:
+                    if plain_text in seen_in_row:
                         continue
-                    seen_in_row.add(text)
+                    seen_in_row.add(plain_text)
 
                     is_list_item = False
                     if para._p.pPr is not None and para._p.pPr.numPr is not None:
@@ -222,7 +264,7 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
 def _find_section_start(paragraphs: list[str], markers: list[str]) -> int:
     """Find the index where a section starts based on markers."""
     for i, para in enumerate(paragraphs):
-        para_upper = para.upper().strip()
+        para_upper = _strip_bbcode(para).upper().strip()
         for marker in markers:
             if marker in para_upper:
                 return i
@@ -236,7 +278,7 @@ def _find_tc_section_start(paragraphs: list[str], markers: list[str]) -> int:
     might appear as substrings in body text (e.g., 'Kehtivad tingimused. 21+.').
     """
     for i, para in enumerate(paragraphs):
-        para_upper = para.upper().strip()
+        para_upper = _strip_bbcode(para).upper().strip()
         for marker in markers:
             # Exact match (standalone header)
             if para_upper == marker:
@@ -277,7 +319,7 @@ def _parse_my_offers_section(paragraphs: list[str]) -> Optional[MyOffersSection]
     ]
     
     for para in paragraphs[start:]:
-        para_upper = para.upper().strip()
+        para_upper = _strip_bbcode(para).upper().strip()
         
         # Check for next major section
         if "LAUNCH OMS" in para_upper or ("SMS" in para_upper and "OMS" not in para_upper):
@@ -320,7 +362,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
     # Find end of section
     end = len(paragraphs)
     for i, para in enumerate(paragraphs[start + 1:], start + 1):
-        para_upper = para.upper().strip()
+        para_upper = _strip_bbcode(para).upper().strip()
         # Check if we hit another major section
         if section_type == "Launch" and "REMINDER" in para_upper:
             end = i
@@ -355,7 +397,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
     
     for para in paragraphs[start:end]:
         para_stripped = para.strip()
-        para_upper = para_stripped.upper()
+        para_upper = _strip_bbcode(para_stripped).upper()
         
         # Check for combined section+variant header (table-based docs)
         # e.g. "LAUNCH OMS - TemplateA", "REMINDER OMS - TemplateB"
@@ -407,7 +449,8 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
             
             # Check if paragraph starts with a label followed by newline (embedded label)
             # e.g., "Title\n🎮 Bet on Sports..." or "Body\n🎯 Get..."
-            if _is_label_start(para_stripped.upper(), TITLE_LABELS):
+            para_plain_upper = _strip_bbcode(para_stripped).upper()
+            if _is_label_start(para_plain_upper, TITLE_LABELS):
                 current_field = "title"
                 # Extract content after the label
                 newline_pos = para_stripped.find('\n')
@@ -417,7 +460,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                         current_template.title = (current_template.title or "") + "\n" + rest if current_template.title else rest
                         current_template.title = current_template.title.strip()
                 continue
-            elif _is_label_start(para_stripped.upper(), BODY_LABELS):
+            elif _is_label_start(para_plain_upper, BODY_LABELS):
                 current_field = "body"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -426,7 +469,7 @@ def _parse_oms_section(paragraphs: list[str], section_type: str) -> Optional[Oms
                         current_template.body = (current_template.body or "") + "\n" + rest if current_template.body else rest
                         current_template.body = current_template.body.strip()
                 continue
-            elif _is_label_start(para_stripped.upper(), CTA_LABELS):
+            elif _is_label_start(para_plain_upper, CTA_LABELS):
                 current_field = "cta"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -489,7 +532,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
     current_field = None
     
     # Check if header itself contains template variant (e.g., "REWARD RECEIVED – OMS – Template A")
-    header_para = paragraphs[start].upper()
+    header_para = _strip_bbcode(paragraphs[start]).upper()
     header_variant = None
     variant_match = re.search(r'(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])', header_para)
     if variant_match:
@@ -515,7 +558,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
     ]
     end = len(paragraphs)
     for i, para in enumerate(paragraphs[start + 1:], start + 1):
-        para_upper = para.upper().strip()
+        para_upper = _strip_bbcode(para).upper().strip()
         if "SMS" in para_upper and "OMS" not in para_upper:
             end = i
             break
@@ -525,7 +568,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
     
     for para in paragraphs[start:end]:
         para_stripped = para.strip()
-        para_upper = para_stripped.upper()
+        para_upper = _strip_bbcode(para_stripped).upper()
         
         # Skip the section header itself (check against all localized markers)
         is_header = any(marker in para_upper for marker in markers)
@@ -564,7 +607,8 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
         
         if current_template:
             # Handle embedded labels (e.g., "Title\nActual title text")
-            if _is_label_start(para_stripped.upper(), TITLE_LABELS):
+            para_plain_upper = _strip_bbcode(para_stripped).upper()
+            if _is_label_start(para_plain_upper, TITLE_LABELS):
                 current_field = "title"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -572,7 +616,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                     if rest:
                         current_template.title = rest
                 continue
-            elif _is_label_start(para_stripped.upper(), BODY_LABELS):
+            elif _is_label_start(para_plain_upper, BODY_LABELS):
                 current_field = "body"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -580,7 +624,7 @@ def _parse_reward_oms_section(paragraphs: list[str]) -> Optional[OmsSection]:
                     if rest:
                         current_template.body = rest
                 continue
-            elif _is_label_start(para_stripped.upper(), CTA_LABELS):
+            elif _is_label_start(para_plain_upper, CTA_LABELS):
                 current_field = "cta"
                 newline_pos = para_stripped.find('\n')
                 if newline_pos > 0:
@@ -644,7 +688,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         et_targets = {"LAUNCH": "LANSSEERIMINE", "REMINDER": "MEELDETULETUS"}
         et_target = et_targets.get(target, "")
         for i, para in enumerate(paragraphs):
-            para_upper_stripped = para.upper().strip()
+            para_upper_stripped = _strip_bbcode(para).upper().strip()
             # Strip leading $ (Word doc artifact in some templates)
             if para_upper_stripped.startswith('$'):
                 para_upper_stripped = para_upper_stripped[1:].strip()
@@ -653,7 +697,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
             if is_sms_header:
                 # Scan ahead for the target sub-header within the SMS block
                 for j in range(i + 1, len(paragraphs)):
-                    line = paragraphs[j].upper().strip()
+                    line = _strip_bbcode(paragraphs[j]).upper().strip()
                     # Strip leading $ (Word doc artifact)
                     if line.startswith('$'):
                         line = line[1:].strip()
@@ -698,7 +742,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
     ]
     end = len(paragraphs)
     for i, para in enumerate(paragraphs[start + 1:], start + 1):
-        para_upper = para.upper().strip()
+        para_upper = _strip_bbcode(para).upper().strip()
         # Strip leading $ (Word doc artifact in some templates)
         if para_upper.startswith('$'):
             para_upper = para_upper[1:].strip()
@@ -719,7 +763,7 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         
         # Strip bullet prefix (• or - or *) if present, for matching
         # This handles Word docs where SMS templates are formatted as list items
-        para_for_match = para_stripped
+        para_for_match = _strip_bbcode(para_stripped)
         if para_for_match.startswith("• "):
             para_for_match = para_for_match[2:]
         elif para_for_match.startswith("- ") or para_for_match.startswith("* "):
@@ -888,7 +932,7 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
     
     for para in paragraphs[start:]:
         para_stripped = para.strip()
-        para_upper = para_stripped.upper()
+        para_upper = _strip_bbcode(para_stripped).upper()
         
         # Stop at ADDITIONAL INFO section (comes after T&C in table-based docs)
         if any(para_upper.startswith(m) for m in tc_stop_markers):

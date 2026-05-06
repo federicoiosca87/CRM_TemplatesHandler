@@ -3868,16 +3868,79 @@ def main():
                             placeholder="e.g. Responsible Gaming tools",
                             help="If this text exists in Significant Terms or Full T&Cs it will be wrapped with the link. Otherwise it will be appended as a new link.",
                         )
+
+                        # Show occurrence picker when text appears multiple times
+                        if tc_link_text:
+                            import re as _re
+                            # Find plain occurrences not already inside [url] tags
+                            def _find_plain_occurrences(content: str, needle: str) -> list[tuple[int, str]]:
+                                """Return list of (char_pos, context_snippet) for plain occurrences of needle."""
+                                hits = []
+                                # Remove existing [url=...]...[/url] blocks to avoid matching inside them
+                                tag_spans = []
+                                for m in _re.finditer(r'\[url=[^\]]*\][^\[]*\[/url\]', content):
+                                    tag_spans.append((m.start(), m.end()))
+                                start = 0
+                                while True:
+                                    pos = content.find(needle, start)
+                                    if pos == -1:
+                                        break
+                                    # Skip if inside a [url] tag
+                                    inside_tag = any(ts <= pos < te for ts, te in tag_spans)
+                                    if not inside_tag:
+                                        ctx_start = max(0, pos - 30)
+                                        ctx_end = min(len(content), pos + len(needle) + 30)
+                                        snippet = content[ctx_start:ctx_end]
+                                        if ctx_start > 0:
+                                            snippet = "…" + snippet
+                                        if ctx_end < len(content):
+                                            snippet = snippet + "…"
+                                        hits.append((pos, snippet))
+                                    start = pos + 1
+                                return hits
+
+                            combined = get_editor_value(sig_key, tc_sig) + "\n===\n" + get_editor_value(full_key, tc_full)
+                            all_hits = _find_plain_occurrences(combined, tc_link_text)
+
+                            if len(all_hits) > 1:
+                                st.caption(f"Found **{len(all_hits)}** occurrences:")
+                                for i, (_pos, snippet) in enumerate(all_hits, 1):
+                                    highlighted = snippet.replace(tc_link_text, f"**{tc_link_text}**")
+                                    st.markdown(f"`{i}.` {highlighted}")
+                                tc_occurrence = st.number_input(
+                                    "Which occurrence to link?",
+                                    min_value=1, max_value=len(all_hits), value=1, step=1,
+                                    key=f"tc_link_occ_{selected_lang}",
+                                )
+                            else:
+                                tc_occurrence = 1
+
                         if st.button("Apply link to both", key=f"tc_link_insert_{selected_lang}"):
                             if tc_link_url and tc_link_text:
                                 bbcode_link = f"[url={tc_link_url}]{tc_link_text}[/url]"
+                                occ_target = tc_occurrence if tc_link_text else 1
                                 for _wk, _fb in [(sig_key, tc_sig), (full_key, tc_full)]:
                                     current = get_editor_value(_wk, _fb)
-                                    if tc_link_text in current and bbcode_link not in current:
-                                        # Wrap the first plain occurrence (not already inside a [url] tag)
-                                        updated = current.replace(tc_link_text, bbcode_link, 1)
-                                    elif bbcode_link in current:
-                                        updated = current  # already linked
+                                    if bbcode_link in current:
+                                        continue  # already linked
+                                    # Find the nth plain occurrence
+                                    hits = _find_plain_occurrences(current, tc_link_text)
+                                    if hits:
+                                        # Wrap the target occurrence (decrement as we consume matches)
+                                        remaining = occ_target
+                                        result = current
+                                        offset = 0
+                                        for hit_pos, _ in hits:
+                                            remaining -= 1
+                                            if remaining == 0:
+                                                adj_pos = hit_pos + offset
+                                                result = result[:adj_pos] + bbcode_link + result[adj_pos + len(tc_link_text):]
+                                                break
+                                        if remaining > 0:
+                                            # Occurrence number exceeded this field's hits — wrap last
+                                            adj_pos = hits[-1][0] + offset
+                                            result = result[:adj_pos] + bbcode_link + result[adj_pos + len(tc_link_text):]
+                                        updated = result
                                     else:
                                         # Text not found — append as new link
                                         updated = (current + " " + bbcode_link).strip()

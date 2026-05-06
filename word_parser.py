@@ -20,6 +20,31 @@ def _strip_bbcode(text: str) -> str:
     return _BBCODE_TAG_RE.sub('', text)
 
 
+def _bullets_to_bbcode_list(text: str) -> str:
+    """Convert consecutive lines starting with '• ' into [ul][li]...[/li][/ul] BBCode."""
+    if not text or '• ' not in text:
+        return text
+    lines = text.split('\n')
+    result = []
+    in_list = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('• '):
+            if not in_list:
+                result.append('[ul]')
+                in_list = True
+            content = stripped[2:]  # remove '• ' prefix
+            result.append(f'[li]{content}[/li]')
+        else:
+            if in_list:
+                result.append('[/ul]')
+                in_list = False
+            result.append(line)
+    if in_list:
+        result.append('[/ul]')
+    return '\n'.join(result)
+
+
 def _run_to_bbcode(run) -> str:
     """Convert a single Word run to BBCode-formatted text."""
     text = run.text
@@ -990,7 +1015,13 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
             current_value = getattr(section, current_field) or ""
             new_value = (current_value + "\n" + para_stripped).strip()
             setattr(section, current_field, new_value)
-    
+
+    # Convert bullet lines to proper BBCode lists
+    if section.significant_terms:
+        section.significant_terms = _bullets_to_bbcode_list(section.significant_terms)
+    if section.terms_and_conditions:
+        section.terms_and_conditions = _bullets_to_bbcode_list(section.terms_and_conditions)
+
     return section
 
 

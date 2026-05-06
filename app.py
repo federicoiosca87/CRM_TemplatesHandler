@@ -1305,7 +1305,10 @@ def bbcode_to_editor_html(text: str) -> str:
     html = re.sub(r'\[ol\](.*?)\[/ol\]', r'<ol>\1</ol>', html, flags=re.DOTALL)
     html = re.sub(r'\[li\](.*?)\[/li\]', r'<li>\1</li>', html, flags=re.DOTALL)
     html = re.sub(r'\[url=(.*?)\](.*?)\[/url\]', r'<a href="\1">\2</a>', html, flags=re.DOTALL)
-    # Convert newlines to <br> but not inside list blocks
+    # Remove newlines between list tags (avoid <br> inside <ul>)
+    html = re.sub(r'\n(?=</?(?:ul|ol|li)>)', '', html)
+    html = re.sub(r'(</?(?:ul|ol|li)>)\n', r'\1', html)
+    # Convert remaining newlines to <br>
     html = html.replace('\n', '<br>')
     return html
 

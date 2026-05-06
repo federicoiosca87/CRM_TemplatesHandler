@@ -1339,6 +1339,9 @@ def html_to_bbcode(html: str) -> str:
     # Clean up extra trailing newlines
     text = text.strip()
     return text
+
+
+def image_file_to_data_uri(image_path: Path) -> str:
     """Encode a local image file as data URI for HTML preview embedding."""
     if not image_path.exists():
         return ""

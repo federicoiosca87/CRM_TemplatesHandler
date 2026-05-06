@@ -3661,7 +3661,7 @@ def main():
                                     if preview_body != edited_body:
                                         st.divider()
                                         st.caption("Preview with link:")
-                                        st.code(preview_body, language=None)
+                                        st.text(preview_body)
                                         _, pcolor, pmsg = get_sms_char_info(preview_body)
                                         if pcolor == "green":
                                             st.success(pmsg)

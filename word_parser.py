@@ -9,9 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 from docx import Document
+from docx.oxml.ns import qn
 from config import SECTION_MARKERS, TEMPLATE_VARIANTS, LANGUAGE_MAPPING
 
-_BBCODE_TAG_RE = re.compile(r'\[/?[biu]\]')
+_BBCODE_TAG_RE = re.compile(r'\[/?(?:b|i|u|url(?:=[^\]]*)?)\]')
 
 
 def _strip_bbcode(text: str) -> str:
@@ -19,37 +20,78 @@ def _strip_bbcode(text: str) -> str:
     return _BBCODE_TAG_RE.sub('', text)
 
 
+def _run_to_bbcode(run) -> str:
+    """Convert a single Word run to BBCode-formatted text."""
+    text = run.text
+    if not text:
+        return ""
+    if run.underline:
+        text = f"[u]{text}[/u]"
+    if run.italic is True:
+        text = f"[i]{text}[/i]"
+    if run.bold is True:
+        text = f"[b]{text}[/b]"
+    return text
+
+
 def _paragraph_to_bbcode(para) -> str:
     """Convert a Word paragraph's runs to text with BBCode formatting.
 
     Preserves explicit bold, italic, and underline formatting applied in Word
-    as [b], [i], [u] BBCode tags.  Style-inherited formatting (e.g. a heading
+    as [b], [i], [u] BBCode tags.  Hyperlinks are converted to
+    [url=...]text[/url] BBCode.  Style-inherited formatting (e.g. a heading
     that is bold by virtue of its style) is ignored so that section headers
     remain plain text for matching purposes.
     """
-    if not para.runs:
-        return para.text.strip()
+    p_element = para._p
+    hyperlink_tag = qn('w:hyperlink')
+    run_tag = qn('w:r')
 
+    has_hyperlinks = p_element.findall(hyperlink_tag)
+
+    # Fast path: no hyperlinks — use simple run iteration
+    if not has_hyperlinks:
+        if not para.runs:
+            return para.text.strip()
+
+        parts = []
+        for run in para.runs:
+            parts.append(_run_to_bbcode(run))
+
+        result = "".join(parts).strip()
+        for tag in ('b', 'i', 'u'):
+            result = result.replace(f"[/{tag}][{tag}]", "")
+        return result
+
+    # Walk XML children to preserve hyperlink boundaries
+    from docx.text.run import Run
     parts = []
-    for run in para.runs:
-        text = run.text
-        if not text:
-            continue
-        # Wrap with BBCode for explicitly applied formatting only
-        if run.underline:
-            text = f"[u]{text}[/u]"
-        if run.italic is True:
-            text = f"[i]{text}[/i]"
-        if run.bold is True:
-            text = f"[b]{text}[/b]"
-        parts.append(text)
+    rels = para.part.rels
+
+    for child in p_element:
+        if child.tag == run_tag:
+            run = Run(child, para)
+            parts.append(_run_to_bbcode(run))
+        elif child.tag == hyperlink_tag:
+            # Extract URL from relationship
+            r_id = child.get(qn('r:id'))
+            url = ""
+            if r_id and r_id in rels:
+                url = rels[r_id].target_ref
+            # Collect text from runs inside the hyperlink
+            link_parts = []
+            for sub in child.findall(run_tag):
+                run = Run(sub, para)
+                link_parts.append(_run_to_bbcode(run))
+            link_text = "".join(link_parts)
+            if url and link_text:
+                parts.append(f"[url={url}]{link_text}[/url]")
+            elif link_text:
+                parts.append(link_text)
 
     result = "".join(parts).strip()
-
-    # Consolidate adjacent same-type tags: [b]x[/b][b]y[/b] → [b]xy[/b]
     for tag in ('b', 'i', 'u'):
         result = result.replace(f"[/{tag}][{tag}]", "")
-
     return result
 
 # Localized field labels (Title / Body / CTA equivalents)

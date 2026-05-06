@@ -3842,6 +3842,21 @@ def main():
                     if invalid_tc or tc_missing:
                         st.warning(f"⚠️ Issues found: {', '.join(tc_missing) if tc_missing else ''} {', '.join(['Invalid: %%' + p + '%%' for p in invalid_tc]) if invalid_tc else ''}")
                     
+                    # Insert link helper (shared — appends to both fields)
+                    with st.expander("🔗 Insert Link", expanded=False):
+                        tc_link_url = st.text_input("URL", key=f"tc_link_url_{selected_lang}", placeholder="https://...")
+                        tc_link_text = st.text_input("Link text", key=f"tc_link_text_{selected_lang}", placeholder="Click here")
+                        if st.button("Insert into both", key=f"tc_link_insert_{selected_lang}"):
+                            if tc_link_url and tc_link_text:
+                                bbcode_link = f"[url={tc_link_url}]{tc_link_text}[/url]"
+                                edited_tc_sig_val = get_editor_value(sig_key, tc_sig)
+                                edited_tc_full_val = get_editor_value(full_key, tc_full)
+                                st.session_state[f"link_buf_{sig_key}"] = (edited_tc_sig_val + " " + bbcode_link).strip()
+                                st.session_state[f"link_buf_{full_key}"] = (edited_tc_full_val + " " + bbcode_link).strip()
+                                set_editor_value(sig_key, st.session_state[f"link_buf_{sig_key}"])
+                                set_editor_value(full_key, st.session_state[f"link_buf_{full_key}"])
+                                st.rerun()
+
                     tc_col1, tc_col2 = st.columns(2)
                     with tc_col1:
                         edited_sig = st.text_area("Significant Terms", height=200, key=sig_key)
@@ -3858,18 +3873,6 @@ def main():
                             )
                         if not edited_sig.strip():
                             st.warning("⚠️ Significant Terms is empty")
-
-                        # Insert link helper
-                        with st.expander("🔗 Insert Link", expanded=False):
-                            sig_link_url = st.text_input("URL", key=f"sig_link_url_{selected_lang}", placeholder="https://...")
-                            sig_link_text = st.text_input("Link text", key=f"sig_link_text_{selected_lang}", placeholder="Click here")
-                            if st.button("Insert", key=f"sig_link_insert_{selected_lang}"):
-                                if sig_link_url and sig_link_text:
-                                    bbcode_link = f"[url={sig_link_url}]{sig_link_text}[/url]"
-                                    updated = (edited_sig + " " + bbcode_link).strip()
-                                    st.session_state[f"link_buf_{sig_key}"] = updated
-                                    set_editor_value(sig_key, updated)
-                                    st.rerun()
 
                         # Rendered preview
                         if edited_sig.strip():
@@ -3891,18 +3894,6 @@ def main():
                             )
                         if not edited_full.strip():
                             st.warning("⚠️ Full T&Cs is empty")
-
-                        # Insert link helper
-                        with st.expander("🔗 Insert Link", expanded=False):
-                            full_link_url = st.text_input("URL", key=f"full_link_url_{selected_lang}", placeholder="https://...")
-                            full_link_text = st.text_input("Link text", key=f"full_link_text_{selected_lang}", placeholder="Click here")
-                            if st.button("Insert", key=f"full_link_insert_{selected_lang}"):
-                                if full_link_url and full_link_text:
-                                    bbcode_link = f"[url={full_link_url}]{full_link_text}[/url]"
-                                    updated = (edited_full + " " + bbcode_link).strip()
-                                    st.session_state[f"link_buf_{full_key}"] = updated
-                                    set_editor_value(full_key, updated)
-                                    st.rerun()
 
                         # Rendered preview
                         if edited_full.strip():

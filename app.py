@@ -3836,6 +3836,10 @@ def main():
                     
                     tc_col1, tc_col2 = st.columns(2)
                     with tc_col1:
+                        # Apply pending link-insert buffer before widget renders
+                        _sig_buf = f"link_buf_{sig_key}"
+                        if _sig_buf in st.session_state:
+                            st.session_state[sig_key] = st.session_state.pop(_sig_buf)
                         edited_sig = st.text_area("Significant Terms", height=200, key=sig_key)
                         set_editor_value(sig_key, edited_sig)
                         sig_invalid = validate_placeholders(edited_sig)
@@ -3859,7 +3863,7 @@ def main():
                                 if sig_link_url and sig_link_text:
                                     bbcode_link = f"[url={sig_link_url}]{sig_link_text}[/url]"
                                     updated = (edited_sig + " " + bbcode_link).strip()
-                                    st.session_state[sig_key] = updated
+                                    st.session_state[f"link_buf_{sig_key}"] = updated
                                     set_editor_value(sig_key, updated)
                                     st.rerun()
 
@@ -3869,6 +3873,10 @@ def main():
                                 st.markdown(bbcode_to_html(edited_sig), unsafe_allow_html=True)
 
                     with tc_col2:
+                        # Apply pending link-insert buffer before widget renders
+                        _full_buf = f"link_buf_{full_key}"
+                        if _full_buf in st.session_state:
+                            st.session_state[full_key] = st.session_state.pop(_full_buf)
                         edited_full = st.text_area("Full Terms & Conditions", height=200, key=full_key)
                         set_editor_value(full_key, edited_full)
                         full_invalid = validate_placeholders(edited_full)
@@ -3892,7 +3900,7 @@ def main():
                                 if full_link_url and full_link_text:
                                     bbcode_link = f"[url={full_link_url}]{full_link_text}[/url]"
                                     updated = (edited_full + " " + bbcode_link).strip()
-                                    st.session_state[full_key] = updated
+                                    st.session_state[f"link_buf_{full_key}"] = updated
                                     set_editor_value(full_key, updated)
                                     st.rerun()
 

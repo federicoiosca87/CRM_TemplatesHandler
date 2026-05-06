@@ -3909,6 +3909,65 @@ def main():
                     # select text → click 🔗 in toolbar → paste URL
                     st.caption("💡 To add a link: select text in the editor → click the 🔗 button in the toolbar → paste the URL")
 
+                    # Dark theme for Quill editors
+                    st.markdown("""
+                    <style>
+                    .quill {
+                        background-color: #0e1117 !important;
+                        border-radius: 0.5rem;
+                    }
+                    .ql-toolbar.ql-snow {
+                        background-color: #1a1d24 !important;
+                        border-color: #3b3f46 !important;
+                        border-radius: 0.5rem 0.5rem 0 0;
+                    }
+                    .ql-container.ql-snow {
+                        background-color: #0e1117 !important;
+                        border-color: #3b3f46 !important;
+                        color: #fafafa !important;
+                        border-radius: 0 0 0.5rem 0.5rem;
+                    }
+                    .ql-editor {
+                        color: #fafafa !important;
+                        min-height: 180px;
+                    }
+                    .ql-editor.ql-blank::before {
+                        color: #6b7280 !important;
+                        font-style: italic;
+                    }
+                    .ql-snow .ql-stroke {
+                        stroke: #9ca3af !important;
+                    }
+                    .ql-snow .ql-fill {
+                        fill: #9ca3af !important;
+                    }
+                    .ql-snow .ql-picker-label {
+                        color: #9ca3af !important;
+                    }
+                    .ql-snow .ql-picker-options {
+                        background-color: #1a1d24 !important;
+                        border-color: #3b3f46 !important;
+                    }
+                    .ql-snow .ql-tooltip {
+                        background-color: #1a1d24 !important;
+                        border-color: #3b3f46 !important;
+                        color: #fafafa !important;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                    }
+                    .ql-snow .ql-tooltip input[type=text] {
+                        background-color: #0e1117 !important;
+                        border-color: #3b3f46 !important;
+                        color: #fafafa !important;
+                    }
+                    .ql-snow .ql-tooltip a {
+                        color: #6db3f2 !important;
+                    }
+                    .ql-editor a {
+                        color: #6db3f2 !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+
                     # Quill toolbar: only formatting we support in BBCode
                     _tc_toolbar = [
                         ["bold", "italic", "underline"],

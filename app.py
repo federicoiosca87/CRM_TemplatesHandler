@@ -19,6 +19,7 @@ from io import BytesIO
 
 import streamlit as st
 import streamlit.components.v1 as components
+from streamlit_quill import st_quill
 import pandas as pd
 
 from config import (
@@ -1288,7 +1289,56 @@ def bbcode_to_html(text: str, highlight_placeholders: bool = True) -> str:
     return html
 
 
-def image_file_to_data_uri(image_path: Path) -> str:
+def bbcode_to_editor_html(text: str) -> str:
+    """Convert BBCode to HTML for loading into the Quill rich text editor.
+
+    Unlike bbcode_to_html(), this does NOT escape HTML entities first (Quill
+    handles that) and does NOT highlight placeholders.
+    """
+    if not text:
+        return ""
+    html = text
+    html = re.sub(r'\[b\](.*?)\[/b\]', r'<strong>\1</strong>', html, flags=re.DOTALL)
+    html = re.sub(r'\[i\](.*?)\[/i\]', r'<em>\1</em>', html, flags=re.DOTALL)
+    html = re.sub(r'\[u\](.*?)\[/u\]', r'<u>\1</u>', html, flags=re.DOTALL)
+    html = re.sub(r'\[ul\](.*?)\[/ul\]', r'<ul>\1</ul>', html, flags=re.DOTALL)
+    html = re.sub(r'\[ol\](.*?)\[/ol\]', r'<ol>\1</ol>', html, flags=re.DOTALL)
+    html = re.sub(r'\[li\](.*?)\[/li\]', r'<li>\1</li>', html, flags=re.DOTALL)
+    html = re.sub(r'\[url=(.*?)\](.*?)\[/url\]', r'<a href="\1">\2</a>', html, flags=re.DOTALL)
+    # Convert newlines to <br> but not inside list blocks
+    html = html.replace('\n', '<br>')
+    return html
+
+
+def html_to_bbcode(html: str) -> str:
+    """Convert HTML (from Quill editor) back to BBCode for CMS storage."""
+    if not html:
+        return ""
+    text = html
+    # Links — must come before stripping other tags
+    text = re.sub(r'<a\s+href="([^"]*)"[^>]*>(.*?)</a>', r'[url=\1]\2[/url]', text, flags=re.DOTALL | re.IGNORECASE)
+    # Bold
+    text = re.sub(r'<(?:strong|b)>(.*?)</(?:strong|b)>', r'[b]\1[/b]', text, flags=re.DOTALL | re.IGNORECASE)
+    # Italic
+    text = re.sub(r'<(?:em|i)>(.*?)</(?:em|i)>', r'[i]\1[/i]', text, flags=re.DOTALL | re.IGNORECASE)
+    # Underline
+    text = re.sub(r'<u>(.*?)</u>', r'[u]\1[/u]', text, flags=re.DOTALL | re.IGNORECASE)
+    # Lists
+    text = re.sub(r'<ul>(.*?)</ul>', r'[ul]\1[/ul]', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<ol>(.*?)</ol>', r'[ol]\1[/ol]', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<li>(.*?)</li>', r'[li]\1[/li]', text, flags=re.DOTALL | re.IGNORECASE)
+    # Line breaks
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    # Paragraphs — Quill wraps content in <p> tags
+    text = re.sub(r'<p>(.*?)</p>', r'\1\n', text, flags=re.DOTALL | re.IGNORECASE)
+    # Strip any remaining HTML tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Decode HTML entities
+    import html as html_module
+    text = html_module.unescape(text)
+    # Clean up extra trailing newlines
+    text = text.strip()
+    return text
     """Encode a local image file as data URI for HTML preview embedding."""
     if not image_path.exists():
         return ""
@@ -3833,13 +3883,6 @@ def main():
                     sig_fix_buffer = f"fix_buffer_{sig_key}"
                     full_fix_buffer = f"fix_buffer_{full_key}"
 
-                    # Apply pending link-insert buffers before sync (which locks values)
-                    for _lk, _wk in [(f"link_buf_{sig_key}", sig_key), (f"link_buf_{full_key}", full_key)]:
-                        if _lk in st.session_state:
-                            _val = st.session_state.pop(_lk)
-                            st.session_state[_wk] = _val
-                            set_editor_value(_wk, _val)
-
                     sync_fix_buffer_to_widget(sig_key, tc_sig)
                     sync_fix_buffer_to_widget(full_key, tc_full)
                     
@@ -3859,98 +3902,30 @@ def main():
                     if invalid_tc or tc_missing:
                         st.warning(f"⚠️ Issues found: {', '.join(tc_missing) if tc_missing else ''} {', '.join(['Invalid: %%' + p + '%%' for p in invalid_tc]) if invalid_tc else ''}")
                     
-                    # Insert link helper (shared — wraps matching text or appends to both fields)
-                    with st.expander("🔗 Insert Link", expanded=False):
-                        tc_link_url = st.text_input("URL", key=f"tc_link_url_{selected_lang}", placeholder="https://...")
-                        tc_link_text = st.text_input(
-                            "Text to hyperlink",
-                            key=f"tc_link_text_{selected_lang}",
-                            placeholder="e.g. Responsible Gaming tools",
-                            help="If this text exists in Significant Terms or Full T&Cs it will be wrapped with the link. Otherwise it will be appended as a new link.",
-                        )
+                    # Insert link helper removed — use Quill's built-in link button:
+                    # select text → click 🔗 in toolbar → paste URL
+                    st.caption("💡 To add a link: select text in the editor → click the 🔗 button in the toolbar → paste the URL")
 
-                        # Show occurrence picker when text appears multiple times
-                        if tc_link_text:
-                            import re as _re
-                            # Find plain occurrences not already inside [url] tags
-                            def _find_plain_occurrences(content: str, needle: str) -> list[tuple[int, str]]:
-                                """Return list of (char_pos, context_snippet) for plain occurrences of needle."""
-                                hits = []
-                                # Remove existing [url=...]...[/url] blocks to avoid matching inside them
-                                tag_spans = []
-                                for m in _re.finditer(r'\[url=[^\]]*\][^\[]*\[/url\]', content):
-                                    tag_spans.append((m.start(), m.end()))
-                                start = 0
-                                while True:
-                                    pos = content.find(needle, start)
-                                    if pos == -1:
-                                        break
-                                    # Skip if inside a [url] tag
-                                    inside_tag = any(ts <= pos < te for ts, te in tag_spans)
-                                    if not inside_tag:
-                                        ctx_start = max(0, pos - 30)
-                                        ctx_end = min(len(content), pos + len(needle) + 30)
-                                        snippet = content[ctx_start:ctx_end]
-                                        if ctx_start > 0:
-                                            snippet = "…" + snippet
-                                        if ctx_end < len(content):
-                                            snippet = snippet + "…"
-                                        hits.append((pos, snippet))
-                                    start = pos + 1
-                                return hits
-
-                            combined = get_editor_value(sig_key, tc_sig) + "\n===\n" + get_editor_value(full_key, tc_full)
-                            all_hits = _find_plain_occurrences(combined, tc_link_text)
-
-                            if len(all_hits) > 1:
-                                st.caption(f"Found **{len(all_hits)}** occurrences:")
-                                for i, (_pos, snippet) in enumerate(all_hits, 1):
-                                    highlighted = snippet.replace(tc_link_text, f"**{tc_link_text}**")
-                                    st.markdown(f"`{i}.` {highlighted}")
-                                tc_occurrence = st.number_input(
-                                    "Which occurrence to link?",
-                                    min_value=1, max_value=len(all_hits), value=1, step=1,
-                                    key=f"tc_link_occ_{selected_lang}",
-                                )
-                            else:
-                                tc_occurrence = 1
-
-                        if st.button("Apply link to both", key=f"tc_link_insert_{selected_lang}"):
-                            if tc_link_url and tc_link_text:
-                                bbcode_link = f"[url={tc_link_url}]{tc_link_text}[/url]"
-                                occ_target = tc_occurrence if tc_link_text else 1
-                                for _wk, _fb in [(sig_key, tc_sig), (full_key, tc_full)]:
-                                    current = get_editor_value(_wk, _fb)
-                                    if bbcode_link in current:
-                                        continue  # already linked
-                                    # Find the nth plain occurrence
-                                    hits = _find_plain_occurrences(current, tc_link_text)
-                                    if hits:
-                                        # Wrap the target occurrence (decrement as we consume matches)
-                                        remaining = occ_target
-                                        result = current
-                                        offset = 0
-                                        for hit_pos, _ in hits:
-                                            remaining -= 1
-                                            if remaining == 0:
-                                                adj_pos = hit_pos + offset
-                                                result = result[:adj_pos] + bbcode_link + result[adj_pos + len(tc_link_text):]
-                                                break
-                                        if remaining > 0:
-                                            # Occurrence number exceeded this field's hits — wrap last
-                                            adj_pos = hits[-1][0] + offset
-                                            result = result[:adj_pos] + bbcode_link + result[adj_pos + len(tc_link_text):]
-                                        updated = result
-                                    else:
-                                        # Text not found — append as new link
-                                        updated = (current + " " + bbcode_link).strip()
-                                    st.session_state[f"link_buf_{_wk}"] = updated
-                                    set_editor_value(_wk, updated)
-                                st.rerun()
+                    # Quill toolbar: only formatting we support in BBCode
+                    _tc_toolbar = [
+                        ["bold", "italic", "underline"],
+                        [{"list": "bullet"}],
+                        ["link"],
+                        ["clean"],
+                    ]
 
                     tc_col1, tc_col2 = st.columns(2)
                     with tc_col1:
-                        edited_sig = st.text_area("Significant Terms", height=200, key=sig_key)
+                        st.markdown("**Significant Terms**")
+                        sig_html_value = bbcode_to_editor_html(get_editor_value(sig_key, tc_sig))
+                        sig_editor_out = st_quill(
+                            value=sig_html_value,
+                            html=True,
+                            toolbar=_tc_toolbar,
+                            placeholder="Significant Terms…",
+                            key=f"quill_{sig_key}",
+                        )
+                        edited_sig = html_to_bbcode(sig_editor_out) if sig_editor_out else ""
                         set_editor_value(sig_key, edited_sig)
                         sig_invalid = validate_placeholders(edited_sig)
                         if sig_invalid:
@@ -3965,13 +3940,17 @@ def main():
                         if not edited_sig.strip():
                             st.warning("⚠️ Significant Terms is empty")
 
-                        # Rendered preview
-                        if edited_sig.strip():
-                            with st.expander("👁 Preview", expanded=True):
-                                st.markdown(bbcode_to_html(edited_sig), unsafe_allow_html=True)
-
                     with tc_col2:
-                        edited_full = st.text_area("Full Terms & Conditions", height=200, key=full_key)
+                        st.markdown("**Full Terms & Conditions**")
+                        full_html_value = bbcode_to_editor_html(get_editor_value(full_key, tc_full))
+                        full_editor_out = st_quill(
+                            value=full_html_value,
+                            html=True,
+                            toolbar=_tc_toolbar,
+                            placeholder="Full Terms & Conditions…",
+                            key=f"quill_{full_key}",
+                        )
+                        edited_full = html_to_bbcode(full_editor_out) if full_editor_out else ""
                         set_editor_value(full_key, edited_full)
                         full_invalid = validate_placeholders(edited_full)
                         if full_invalid:
@@ -3985,11 +3964,6 @@ def main():
                             )
                         if not edited_full.strip():
                             st.warning("⚠️ Full T&Cs is empty")
-
-                        # Rendered preview
-                        if edited_full.strip():
-                            with st.expander("👁 Preview", expanded=True):
-                                st.markdown(bbcode_to_html(edited_full), unsafe_allow_html=True)
                 else:
                     st.warning("No T&Cs found")
     

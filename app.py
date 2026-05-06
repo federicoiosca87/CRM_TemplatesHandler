@@ -3654,6 +3654,23 @@ def main():
                                 
                                 for warn in check_missing_content("SMS", body=edited_body):
                                     st.warning(warn)
+
+                                # Show preview with SMS link appended (if set)
+                                if sms_link:
+                                    preview_body = _append_sms_link(edited_body, sms_link)
+                                    if preview_body != edited_body:
+                                        st.divider()
+                                        st.caption("Preview with link:")
+                                        st.code(preview_body, language=None)
+                                        _, pcolor, pmsg = get_sms_char_info(preview_body)
+                                        if pcolor == "green":
+                                            st.success(pmsg)
+                                        elif pcolor == "orange":
+                                            st.warning(pmsg)
+                                        elif pcolor == "red":
+                                            st.error(pmsg)
+                                        else:
+                                            st.info(pmsg)
                     else:
                         st.warning("No SMS templates found")
                 

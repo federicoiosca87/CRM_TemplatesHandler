@@ -3859,19 +3859,30 @@ def main():
                     if invalid_tc or tc_missing:
                         st.warning(f"⚠️ Issues found: {', '.join(tc_missing) if tc_missing else ''} {', '.join(['Invalid: %%' + p + '%%' for p in invalid_tc]) if invalid_tc else ''}")
                     
-                    # Insert link helper (shared — appends to both fields)
+                    # Insert link helper (shared — wraps matching text or appends to both fields)
                     with st.expander("🔗 Insert Link", expanded=False):
                         tc_link_url = st.text_input("URL", key=f"tc_link_url_{selected_lang}", placeholder="https://...")
-                        tc_link_text = st.text_input("Link text", key=f"tc_link_text_{selected_lang}", placeholder="Click here")
-                        if st.button("Insert into both", key=f"tc_link_insert_{selected_lang}"):
+                        tc_link_text = st.text_input(
+                            "Text to hyperlink",
+                            key=f"tc_link_text_{selected_lang}",
+                            placeholder="e.g. Responsible Gaming tools",
+                            help="If this text exists in Significant Terms or Full T&Cs it will be wrapped with the link. Otherwise it will be appended as a new link.",
+                        )
+                        if st.button("Apply link to both", key=f"tc_link_insert_{selected_lang}"):
                             if tc_link_url and tc_link_text:
                                 bbcode_link = f"[url={tc_link_url}]{tc_link_text}[/url]"
-                                edited_tc_sig_val = get_editor_value(sig_key, tc_sig)
-                                edited_tc_full_val = get_editor_value(full_key, tc_full)
-                                st.session_state[f"link_buf_{sig_key}"] = (edited_tc_sig_val + " " + bbcode_link).strip()
-                                st.session_state[f"link_buf_{full_key}"] = (edited_tc_full_val + " " + bbcode_link).strip()
-                                set_editor_value(sig_key, st.session_state[f"link_buf_{sig_key}"])
-                                set_editor_value(full_key, st.session_state[f"link_buf_{full_key}"])
+                                for _wk, _fb in [(sig_key, tc_sig), (full_key, tc_full)]:
+                                    current = get_editor_value(_wk, _fb)
+                                    if tc_link_text in current and bbcode_link not in current:
+                                        # Wrap the first plain occurrence (not already inside a [url] tag)
+                                        updated = current.replace(tc_link_text, bbcode_link, 1)
+                                    elif bbcode_link in current:
+                                        updated = current  # already linked
+                                    else:
+                                        # Text not found — append as new link
+                                        updated = (current + " " + bbcode_link).strip()
+                                    st.session_state[f"link_buf_{_wk}"] = updated
+                                    set_editor_value(_wk, updated)
                                 st.rerun()
 
                     tc_col1, tc_col2 = st.columns(2)

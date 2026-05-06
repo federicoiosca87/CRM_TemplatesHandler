@@ -3635,6 +3635,65 @@ def main():
                 if "qa_last_fix_summary" in st.session_state:
                     st.caption(st.session_state["qa_last_fix_summary"])
 
+                # Dark theme for all Quill editors (OMS + T&C)
+                components.html("""
+                <script>
+                function applyQuillDarkTheme() {
+                    var parent = window.parent.document;
+                    var iframes = parent.querySelectorAll('iframe[title="streamlit_quill.streamlit_quill"]');
+                    iframes.forEach(function(iframe) {
+                        try {
+                            var doc = iframe.contentDocument || iframe.contentWindow.document;
+                            if (!doc || doc.getElementById('quill-dark-css')) return;
+                            var style = doc.createElement('style');
+                            style.id = 'quill-dark-css';
+                            style.textContent = `
+                                body { background-color: transparent !important; }
+                                .quill { background-color: #0e1117 !important; border-radius: 0.5rem; }
+                                .ql-toolbar.ql-snow {
+                                    background-color: #1a1d24 !important;
+                                    border-color: #3b3f46 !important;
+                                    border-radius: 0.5rem 0.5rem 0 0;
+                                }
+                                .ql-container.ql-snow {
+                                    background-color: #0e1117 !important;
+                                    border-color: #3b3f46 !important;
+                                    color: #fafafa !important;
+                                    border-radius: 0 0 0.5rem 0.5rem;
+                                    font-size: 14px;
+                                }
+                                .ql-editor { color: #fafafa !important; min-height: 180px; }
+                                .ql-editor.ql-blank::before { color: #6b7280 !important; }
+                                .ql-snow .ql-stroke { stroke: #9ca3af !important; }
+                                .ql-snow .ql-fill { fill: #9ca3af !important; }
+                                .ql-snow .ql-picker-label { color: #9ca3af !important; }
+                                .ql-snow .ql-picker-options {
+                                    background-color: #1a1d24 !important;
+                                    border-color: #3b3f46 !important;
+                                }
+                                .ql-snow .ql-tooltip {
+                                    background-color: #1a1d24 !important;
+                                    border-color: #3b3f46 !important;
+                                    color: #fafafa !important;
+                                    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                                }
+                                .ql-snow .ql-tooltip input[type=text] {
+                                    background-color: #0e1117 !important;
+                                    border-color: #3b3f46 !important;
+                                    color: #fafafa !important;
+                                }
+                                .ql-snow .ql-tooltip a { color: #6db3f2 !important; }
+                                .ql-editor a { color: #6db3f2 !important; }
+                            `;
+                            doc.head.appendChild(style);
+                        } catch(e) {}
+                    });
+                }
+                var _qdi = setInterval(applyQuillDarkTheme, 500);
+                setTimeout(function() { clearInterval(_qdi); }, 15000);
+                </script>
+                """, height=0)
+
                 col1, col2 = st.columns(2)
                 
                 with col1:
@@ -3784,10 +3843,28 @@ def main():
                                 sync_fix_buffer_to_widget(cta_key, oms_cta)
                                 
                                 edited_title = st.text_input("Title", key=title_key)
-                                edited_body = st.text_area("Body (BBCode)", height=150, key=body_key)
-                                edited_cta = st.text_input("CTA", key=cta_key)
                                 set_editor_value(title_key, edited_title)
+
+                                # Quill rich text editor for Body
+                                _oms_toolbar = [
+                                    ["bold", "italic", "underline"],
+                                    [{"list": "bullet"}],
+                                    ["link"],
+                                    ["clean"],
+                                ]
+                                st.caption("Body")
+                                body_html_value = bbcode_to_editor_html(get_editor_value(body_key, oms_body))
+                                body_editor_out = st_quill(
+                                    value=body_html_value,
+                                    html=True,
+                                    toolbar=_oms_toolbar,
+                                    placeholder="Body…",
+                                    key=f"quill_{body_key}",
+                                )
+                                edited_body = html_to_bbcode(body_editor_out) if body_editor_out else ""
                                 set_editor_value(body_key, edited_body)
+
+                                edited_cta = st.text_input("CTA", key=cta_key)
                                 set_editor_value(cta_key, edited_cta)
 
                                 title_invalid = validate_placeholders(edited_title)
@@ -3911,66 +3988,6 @@ def main():
                     # Insert link helper removed — use Quill's built-in link button:
                     # select text → click 🔗 in toolbar → paste URL
                     st.caption("💡 To add a link: select text in the editor → click the 🔗 button in the toolbar → paste the URL")
-
-                    # Dark theme for Quill editors — injected into iframes via JS
-                    # st.markdown strips <script> tags, so we use components.html() instead
-                    components.html("""
-                    <script>
-                    function applyQuillDarkTheme() {
-                        var parent = window.parent.document;
-                        var iframes = parent.querySelectorAll('iframe[title="streamlit_quill.streamlit_quill"]');
-                        iframes.forEach(function(iframe) {
-                            try {
-                                var doc = iframe.contentDocument || iframe.contentWindow.document;
-                                if (!doc || doc.getElementById('quill-dark-css')) return;
-                                var style = doc.createElement('style');
-                                style.id = 'quill-dark-css';
-                                style.textContent = `
-                                    body { background-color: transparent !important; }
-                                    .quill { background-color: #0e1117 !important; border-radius: 0.5rem; }
-                                    .ql-toolbar.ql-snow {
-                                        background-color: #1a1d24 !important;
-                                        border-color: #3b3f46 !important;
-                                        border-radius: 0.5rem 0.5rem 0 0;
-                                    }
-                                    .ql-container.ql-snow {
-                                        background-color: #0e1117 !important;
-                                        border-color: #3b3f46 !important;
-                                        color: #fafafa !important;
-                                        border-radius: 0 0 0.5rem 0.5rem;
-                                        font-size: 14px;
-                                    }
-                                    .ql-editor { color: #fafafa !important; min-height: 180px; }
-                                    .ql-editor.ql-blank::before { color: #6b7280 !important; }
-                                    .ql-snow .ql-stroke { stroke: #9ca3af !important; }
-                                    .ql-snow .ql-fill { fill: #9ca3af !important; }
-                                    .ql-snow .ql-picker-label { color: #9ca3af !important; }
-                                    .ql-snow .ql-picker-options {
-                                        background-color: #1a1d24 !important;
-                                        border-color: #3b3f46 !important;
-                                    }
-                                    .ql-snow .ql-tooltip {
-                                        background-color: #1a1d24 !important;
-                                        border-color: #3b3f46 !important;
-                                        color: #fafafa !important;
-                                        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-                                    }
-                                    .ql-snow .ql-tooltip input[type=text] {
-                                        background-color: #0e1117 !important;
-                                        border-color: #3b3f46 !important;
-                                        color: #fafafa !important;
-                                    }
-                                    .ql-snow .ql-tooltip a { color: #6db3f2 !important; }
-                                    .ql-editor a { color: #6db3f2 !important; }
-                                `;
-                                doc.head.appendChild(style);
-                            } catch(e) {}
-                        });
-                    }
-                    var _qdi = setInterval(applyQuillDarkTheme, 500);
-                    setTimeout(function() { clearInterval(_qdi); }, 15000);
-                    </script>
-                    """, height=0)
 
                     # Quill toolbar: only formatting we support in BBCode
                     _tc_toolbar = [

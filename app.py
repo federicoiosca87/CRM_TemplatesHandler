@@ -1927,15 +1927,17 @@ def get_effective_widget_value(widget_key: str, fallback_value: str) -> str:
 
 
 def _append_sms_link(body: str, link: str) -> str:
-    """Append an SMS link after 'T&Cs apply.' if not already present."""
+    """Append an SMS link after the age requirement (e.g. 18+, 21+) at the end of the SMS body."""
     if not link or link in body:
         return body
-    # Try to insert after "T&Cs apply." (case-insensitive)
     import re as _re
-    pattern = _re.compile(r"(T&Cs?\s+apply\.?)", _re.IGNORECASE)
-    match = pattern.search(body)
-    if match:
-        insert_pos = match.end()
+    # Find the last age requirement pattern (e.g. "18+", "21+", "18+.")
+    # This is language-agnostic and typically the last element in SMS text
+    age_pattern = _re.compile(r"(\d{2}\+\.?)")
+    matches = list(age_pattern.finditer(body))
+    if matches:
+        last_match = matches[-1]
+        insert_pos = last_match.end()
         return body[:insert_pos] + " " + link + body[insert_pos:]
     # Fallback: append at the end
     return body.rstrip() + " " + link
@@ -3584,10 +3586,10 @@ def main():
 
                     sms_link_key = f"sms_link_{selected_lang}"
                     sms_link = st.text_input(
-                        "🔗 SMS Link (auto-appended after \"T&Cs apply.\")",
+                        "🔗 SMS Link (auto-appended after age requirement)",
                         key=sms_link_key,
                         placeholder="e.g., sms.%%BrandDomain%%/xyz",
-                        help="Enter once per language — will be appended to all SMS bodies after 'T&Cs apply.'",
+                        help="Enter once per language — will be appended after the age requirement (e.g. 18+) in all SMS bodies",
                     )
 
                     all_sms_templates = []

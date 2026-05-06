@@ -3913,15 +3913,17 @@ def main():
                     st.caption("💡 To add a link: select text in the editor → click the 🔗 button in the toolbar → paste the URL")
 
                     # Dark theme for Quill editors — injected into iframes via JS
-                    st.markdown("""
+                    # st.markdown strips <script> tags, so we use components.html() instead
+                    components.html("""
                     <script>
                     function applyQuillDarkTheme() {
-                        const iframes = document.querySelectorAll('iframe[title="streamlit_quill.streamlit_quill"]');
+                        var parent = window.parent.document;
+                        var iframes = parent.querySelectorAll('iframe[title="streamlit_quill.streamlit_quill"]');
                         iframes.forEach(function(iframe) {
                             try {
-                                const doc = iframe.contentDocument || iframe.contentWindow.document;
+                                var doc = iframe.contentDocument || iframe.contentWindow.document;
                                 if (!doc || doc.getElementById('quill-dark-css')) return;
-                                const style = doc.createElement('style');
+                                var style = doc.createElement('style');
                                 style.id = 'quill-dark-css';
                                 style.textContent = `
                                     body { background-color: transparent !important; }
@@ -3965,13 +3967,10 @@ def main():
                             } catch(e) {}
                         });
                     }
-                    // Retry as iframes load asynchronously
-                    const _qdi = setInterval(function() {
-                        applyQuillDarkTheme();
-                    }, 300);
-                    setTimeout(function() { clearInterval(_qdi); }, 10000);
+                    var _qdi = setInterval(applyQuillDarkTheme, 500);
+                    setTimeout(function() { clearInterval(_qdi); }, 15000);
                     </script>
-                    """, unsafe_allow_html=True)
+                    """, height=0)
 
                     # Quill toolbar: only formatting we support in BBCode
                     _tc_toolbar = [

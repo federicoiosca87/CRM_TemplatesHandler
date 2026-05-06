@@ -3815,6 +3815,14 @@ def main():
                     full_key = f"tc_full_{selected_lang}"
                     sig_fix_buffer = f"fix_buffer_{sig_key}"
                     full_fix_buffer = f"fix_buffer_{full_key}"
+
+                    # Apply pending link-insert buffers before sync (which locks values)
+                    for _lk, _wk in [(f"link_buf_{sig_key}", sig_key), (f"link_buf_{full_key}", full_key)]:
+                        if _lk in st.session_state:
+                            _val = st.session_state.pop(_lk)
+                            st.session_state[_wk] = _val
+                            set_editor_value(_wk, _val)
+
                     sync_fix_buffer_to_widget(sig_key, tc_sig)
                     sync_fix_buffer_to_widget(full_key, tc_full)
                     
@@ -3836,10 +3844,6 @@ def main():
                     
                     tc_col1, tc_col2 = st.columns(2)
                     with tc_col1:
-                        # Apply pending link-insert buffer before widget renders
-                        _sig_buf = f"link_buf_{sig_key}"
-                        if _sig_buf in st.session_state:
-                            st.session_state[sig_key] = st.session_state.pop(_sig_buf)
                         edited_sig = st.text_area("Significant Terms", height=200, key=sig_key)
                         set_editor_value(sig_key, edited_sig)
                         sig_invalid = validate_placeholders(edited_sig)
@@ -3873,10 +3877,6 @@ def main():
                                 st.markdown(bbcode_to_html(edited_sig), unsafe_allow_html=True)
 
                     with tc_col2:
-                        # Apply pending link-insert buffer before widget renders
-                        _full_buf = f"link_buf_{full_key}"
-                        if _full_buf in st.session_state:
-                            st.session_state[full_key] = st.session_state.pop(_full_buf)
                         edited_full = st.text_area("Full Terms & Conditions", height=200, key=full_key)
                         set_editor_value(full_key, edited_full)
                         full_invalid = validate_placeholders(edited_full)

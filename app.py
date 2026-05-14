@@ -3659,6 +3659,155 @@ def render_console_section_header(kicker: str, title: str, subtitle: str) -> Non
     )
 
 
+@st.fragment
+def _render_review_fragment():
+    """Render the full QA Review panel as a fragment so language changes don't reload the page."""
+    parsed_docs = st.session_state["parsed_docs"]
+    effective_docs = build_effective_parsed_docs(parsed_docs)
+
+    readiness = build_language_readiness(effective_docs)
+
+    status_by_lang = {
+        doc.language_code: readiness["by_language"][doc.language_code]["status"]
+        for doc in parsed_docs
+    }
+    previous_status_by_lang = st.session_state.get("qa_prev_status_by_lang", {})
+    newly_resolved = collect_resolved_status_transitions(previous_status_by_lang, status_by_lang)
+    if newly_resolved:
+        resolved_events = st.session_state.get("qa_resolved_events", [])
+        for event in newly_resolved:
+            if event not in resolved_events:
+                resolved_events.append(event)
+        st.session_state["qa_resolved_events"] = resolved_events[-6:]
+    st.session_state["qa_prev_status_by_lang"] = status_by_lang
+
+    resolved_events = st.session_state.get("qa_resolved_events", [])
+    render_console_metrics(readiness, resolved_events)
+
+    issue_langs = [lang for lang, status in status_by_lang.items() if status != "ready"]
+    render_issue_chips(readiness, parsed_docs)
+
+    if readiness["has_issues"]:
+        st.caption("Click an issue chip to jump directly to that language.")
+    else:
+        st.caption("All languages are currently clear for export.")
+
+    show_qa_details = st.toggle(
+        "Show QA details",
+        value=False,
+        help="Expanded details for each language status.",
+    )
+
+    if show_qa_details:
+        rows = []
+        for doc in parsed_docs:
+            lang = doc.language_code
+            lang_name = LANGUAGE_NAMES.get(lang, lang)
+            state = readiness["by_language"][lang]["status"]
+            status_label = "✅ Ready" if state == "ready" else ("⚠️ Missing" if state == "missing" else "❌ Invalid")
+
+            mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
+            if mismatch_info.get("detected"):
+                detected = mismatch_info.get("detected_lang", "unknown").upper()
+                mismatch_label = f"🌐 Detected as {detected}"
+            else:
+                mismatch_label = "✓"
+
+            rows.append({
+                "Language": f"{lang} ({lang_name})",
+                "Status": status_label,
+                "Invalid placeholders": readiness["by_language"][lang]["invalid_count"],
+                "Missing issues": len(readiness["by_language"][lang]["missing_issues"]),
+                "Language Match": mismatch_label,
+            })
+
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=210)
+
+    # Language selector with full names
+    languages = [doc.language_code for doc in parsed_docs]
+
+    def format_language(code: str) -> str:
+        name = LANGUAGE_NAMES.get(code, code)
+        return f"{code} - {name}"
+
+    if "qa_language_select" not in st.session_state or st.session_state.get("qa_language_select") not in languages:
+        st.session_state["qa_language_select"] = issue_langs[0] if issue_langs else (languages[0] if languages else None)
+
+    default_lang = st.session_state.get("qa_target_lang")
+    if default_lang and default_lang in languages:
+        st.session_state["qa_language_select"] = default_lang
+        del st.session_state["qa_target_lang"]
+
+    if st.session_state.get("qa_advance_after_fix"):
+        current_lang = st.session_state.get("qa_language_select", st.session_state.get("qa_last_selected_lang", ""))
+        if current_lang in issue_langs:
+            st.session_state["qa_language_select"] = current_lang
+        else:
+            st.session_state["qa_language_select"] = choose_next_issue_language(current_lang, issue_langs) or current_lang
+        st.session_state["qa_advance_after_fix"] = False
+
+    selected_lang = st.selectbox(
+        "Select Language to Preview",
+        languages,
+        format_func=format_language,
+        key="qa_language_select",
+    )
+
+    previous_selected_lang = st.session_state.get("qa_last_selected_lang")
+    if previous_selected_lang and previous_selected_lang != selected_lang:
+        st.session_state.pop("qa_last_fix_summary", None)
+
+    st.session_state["qa_last_selected_lang"] = selected_lang
+
+    selected_doc = next((d for d in parsed_docs if d.language_code == selected_lang), None)
+    selected_mismatch_info = readiness["by_language"].get(selected_lang, {}).get("language_mismatch", {})
+    selected_lang_has_mismatch = bool(selected_mismatch_info.get("detected"))
+
+    if selected_doc:
+        available_safe_fixes = count_safe_fixes_for_language(selected_lang, selected_doc)
+        if available_safe_fixes > 0:
+            fix_col, summary_col = st.columns([2, 10])
+            with fix_col:
+                if st.button(
+                    f"Fix safe in {selected_lang}",
+                    key=f"fix_all_safe_{selected_lang}",
+                    width="stretch",
+                    type="secondary",
+                    help="Apply high-confidence placeholder fixes across SMS/OMS/T&C in this language.",
+                ):
+                    changes = apply_safe_fixes_for_language(selected_lang, selected_doc)
+                    if changes:
+                        history = st.session_state.get("qa_fix_history", [])
+                        history.append(f"{selected_lang}: " + ", ".join(changes[:4]))
+                        st.session_state["qa_fix_history"] = history[-8:]
+                        st.session_state["qa_last_fix_summary"] = (
+                            f"✅ Applied safe fixes in {selected_lang}: " + ", ".join(changes[:5])
+                        )
+                        st.rerun()
+                    else:
+                        st.session_state["qa_last_fix_summary"] = (
+                            f"No high-confidence placeholder fixes found for {selected_lang}."
+                        )
+                        st.rerun()
+
+            with summary_col:
+                st.caption(
+                    f"{available_safe_fixes} safe fixable field(s). "
+                    "Applies only high-confidence fixes. Use per-field Undo if needed."
+                )
+
+        if "qa_last_fix_summary" in st.session_state:
+            st.caption(st.session_state["qa_last_fix_summary"])
+
+        col1, col2 = st.columns(2)
+        with col1:
+            render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+        with col2:
+            render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+
+        render_tc_fragment(selected_doc, selected_lang)
+
+
 def _restore_session_from_disk() -> bool:
     """Attempt to restore a full session from disk autosave (ZIP + editor state).
 
@@ -4185,154 +4334,7 @@ def main():
             </div>
             """, unsafe_allow_html=True)
         else:
-            parsed_docs = st.session_state["parsed_docs"]
-            effective_docs = build_effective_parsed_docs(parsed_docs)
-
-            readiness = build_language_readiness(effective_docs)
-
-            status_by_lang = {
-                doc.language_code: readiness["by_language"][doc.language_code]["status"]
-                for doc in parsed_docs
-            }
-            previous_status_by_lang = st.session_state.get("qa_prev_status_by_lang", {})
-            newly_resolved = collect_resolved_status_transitions(previous_status_by_lang, status_by_lang)
-            if newly_resolved:
-                resolved_events = st.session_state.get("qa_resolved_events", [])
-                for event in newly_resolved:
-                    if event not in resolved_events:
-                        resolved_events.append(event)
-                st.session_state["qa_resolved_events"] = resolved_events[-6:]
-            st.session_state["qa_prev_status_by_lang"] = status_by_lang
-
-            resolved_events = st.session_state.get("qa_resolved_events", [])
-            render_console_metrics(readiness, resolved_events)
-
-            issue_langs = [lang for lang, status in status_by_lang.items() if status != "ready"]
-            render_issue_chips(readiness, parsed_docs)
-
-            if readiness["has_issues"]:
-                st.caption("Click an issue chip to jump directly to that language.")
-            else:
-                st.caption("All languages are currently clear for export.")
-
-            show_qa_details = st.toggle(
-                "Show QA details",
-                value=False,
-                help="Expanded details for each language status.",
-            )
-
-            if show_qa_details:
-                rows = []
-                for doc in parsed_docs:
-                    lang = doc.language_code
-                    lang_name = LANGUAGE_NAMES.get(lang, lang)
-                    state = readiness["by_language"][lang]["status"]
-                    status_label = "✅ Ready" if state == "ready" else ("⚠️ Missing" if state == "missing" else "❌ Invalid")
-                    
-                    # Check for language mismatch
-                    mismatch_info = readiness["by_language"][lang].get("language_mismatch", {})
-                    mismatch_label = ""
-                    if mismatch_info.get("detected"):
-                        detected = mismatch_info.get("detected_lang", "unknown").upper()
-                        mismatch_label = f"🌐 Detected as {detected}"
-                    else:
-                        mismatch_label = "✓"
-                    
-                    rows.append({
-                        "Language": f"{lang} ({lang_name})",
-                        "Status": status_label,
-                        "Invalid placeholders": readiness["by_language"][lang]["invalid_count"],
-                        "Missing issues": len(readiness["by_language"][lang]["missing_issues"]),
-                        "Language Match": mismatch_label,
-                    })
-
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True, height=210)
-            
-            # Language selector with full names
-            languages = [doc.language_code for doc in parsed_docs]
-            
-            def format_language(code: str) -> str:
-                """Format language code with full name."""
-                name = LANGUAGE_NAMES.get(code, code)
-                return f"{code} - {name}"
-            
-            if "qa_language_select" not in st.session_state or st.session_state.get("qa_language_select") not in languages:
-                st.session_state["qa_language_select"] = issue_langs[0] if issue_langs else (languages[0] if languages else None)
-
-            default_lang = st.session_state.get("qa_target_lang")
-            if default_lang and default_lang in languages:
-                st.session_state["qa_language_select"] = default_lang
-                del st.session_state["qa_target_lang"]
-
-            if st.session_state.get("qa_advance_after_fix"):
-                current_lang = st.session_state.get("qa_language_select", st.session_state.get("qa_last_selected_lang", ""))
-                if current_lang in issue_langs:
-                    st.session_state["qa_language_select"] = current_lang
-                else:
-                    st.session_state["qa_language_select"] = choose_next_issue_language(current_lang, issue_langs) or current_lang
-                st.session_state["qa_advance_after_fix"] = False
-
-            selected_lang = st.selectbox(
-                "Select Language to Preview",
-                languages,
-                format_func=format_language,
-                key="qa_language_select",
-            )
-
-            previous_selected_lang = st.session_state.get("qa_last_selected_lang")
-            if previous_selected_lang and previous_selected_lang != selected_lang:
-                st.session_state.pop("qa_last_fix_summary", None)
-
-            st.session_state["qa_last_selected_lang"] = selected_lang
-            
-            selected_doc = next((d for d in parsed_docs if d.language_code == selected_lang), None)
-            selected_mismatch_info = readiness["by_language"].get(selected_lang, {}).get("language_mismatch", {})
-            selected_lang_has_mismatch = bool(selected_mismatch_info.get("detected"))
-            
-            if selected_doc:
-                available_safe_fixes = count_safe_fixes_for_language(selected_lang, selected_doc)
-                if available_safe_fixes > 0:
-                    fix_col, summary_col = st.columns([2, 10])
-                    with fix_col:
-                        if st.button(
-                            f"Fix safe in {selected_lang}",
-                            key=f"fix_all_safe_{selected_lang}",
-                            width="stretch",
-                            type="secondary",
-                            help="Apply high-confidence placeholder fixes across SMS/OMS/T&C in this language.",
-                        ):
-                            changes = apply_safe_fixes_for_language(selected_lang, selected_doc)
-                            if changes:
-                                # Stay on current language, don't jump
-                                history = st.session_state.get("qa_fix_history", [])
-                                history.append(f"{selected_lang}: " + ", ".join(changes[:4]))
-                                st.session_state["qa_fix_history"] = history[-8:]
-                                st.session_state["qa_last_fix_summary"] = (
-                                    f"✅ Applied safe fixes in {selected_lang}: " + ", ".join(changes[:5])
-                                )
-                                st.rerun()
-                            else:
-                                st.session_state["qa_last_fix_summary"] = (
-                                    f"No high-confidence placeholder fixes found for {selected_lang}."
-                                )
-                                st.rerun()
-
-                    with summary_col:
-                        st.caption(
-                            f"{available_safe_fixes} safe fixable field(s). "
-                            "Applies only high-confidence fixes. Use per-field Undo if needed."
-                        )
-
-                if "qa_last_fix_summary" in st.session_state:
-                    st.caption(st.session_state["qa_last_fix_summary"])
-
-                col1, col2 = st.columns(2)
-                with col1:
-                    render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
-                with col2:
-                    render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
-
-                render_tc_fragment(selected_doc, selected_lang)
+            _render_review_fragment()
     
     with tab3:
         render_console_section_header(

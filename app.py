@@ -1535,6 +1535,11 @@ def check_missing_content(template_type: str, title: str = None, body: str = Non
             warnings.append("⚠️ Body is empty")
         if not cta or not cta.strip():
             warnings.append("⚠️ CTA is empty")
+    elif template_type == "PUSH":
+        if not title or not title.strip():
+            warnings.append("⚠️ Title is empty")
+        if not body or not body.strip():
+            warnings.append("⚠️ Body is empty")
     elif template_type == "SMS":
         if not body or not body.strip():
             warnings.append("⚠️ SMS body is empty")
@@ -2810,7 +2815,7 @@ def render_push_fragment(selected_doc, selected_lang, selected_lang_has_mismatch
                 (get_effective_widget_value(title_key, push_title) or "") + " " +
                 (get_effective_widget_value(body_key, push_body) or "")
             )
-            missing = check_missing_content("OMS", title=get_effective_widget_value(title_key, push_title),
+            missing = check_missing_content("PUSH", title=get_effective_widget_value(title_key, push_title),
                                             body=get_effective_widget_value(body_key, push_body))
 
             push_flags: list[str] = []
@@ -2857,7 +2862,7 @@ def render_push_fragment(selected_doc, selected_lang, selected_lang_has_mismatch
                         tracking_field_label=f"Push {push_type} {template.variant} Body",
                     )
 
-                for warn in check_missing_content("OMS", title=edited_title, body=edited_body):
+                for warn in check_missing_content("PUSH", title=edited_title, body=edited_body):
                     st.warning(warn)
     else:
         st.info("No Push Notification templates found")

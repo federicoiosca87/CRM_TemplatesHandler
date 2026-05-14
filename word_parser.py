@@ -126,7 +126,7 @@ def _paragraph_to_bbcode(para) -> str:
 TITLE_LABELS = {"TITLE", "PEALKIRI", "TITILL", "TÍTULO", "TITULO"}
 BODY_LABELS = {"BODY", "MEGINMÁL", "MEGINMAL", "CUERPO"}
 CTA_LABELS = {"CTA", "CALL TO ACTION", "CALLTOACTION"}
-ACTION_KEY_LABELS = {"ACTION KEY", "ACTIONKEY", "ACTION"}
+ACTION_KEY_LABELS = {"ACTION KEY", "ACTIONKEY"}
 ACTION_VALUE_LABELS = {"ACTION VALUE", "ACTIONVALUE"}
 
 
@@ -1133,16 +1133,6 @@ def _parse_push_section(paragraphs: list[str], section_type: str) -> Optional[Pu
                 current_template.body = rest
             continue
 
-        if _is_standalone_label(para_upper, ACTION_KEY_LABELS):
-            current_field = "action_key"
-            continue
-        elif _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS) is not None:
-            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS)
-            current_field = "action_key"
-            if rest:
-                current_template.action_key = rest
-            continue
-
         if _is_standalone_label(para_upper, ACTION_VALUE_LABELS):
             current_field = "action_value"
             continue
@@ -1151,6 +1141,16 @@ def _parse_push_section(paragraphs: list[str], section_type: str) -> Optional[Pu
             current_field = "action_value"
             if rest:
                 current_template.action_value = rest
+            continue
+
+        if _is_standalone_label(para_upper, ACTION_KEY_LABELS):
+            current_field = "action_key"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS)
+            current_field = "action_key"
+            if rest:
+                current_template.action_key = rest
             continue
 
         # Content line — append to current field
@@ -1271,16 +1271,6 @@ def _parse_reward_push_section(paragraphs: list[str]) -> Optional[PushSection]:
                 current_template.body = rest
             continue
 
-        if _is_standalone_label(para_upper, ACTION_KEY_LABELS):
-            current_field = "action_key"
-            continue
-        elif _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS) is not None:
-            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS)
-            current_field = "action_key"
-            if rest:
-                current_template.action_key = rest
-            continue
-
         if _is_standalone_label(para_upper, ACTION_VALUE_LABELS):
             current_field = "action_value"
             continue
@@ -1289,6 +1279,16 @@ def _parse_reward_push_section(paragraphs: list[str]) -> Optional[PushSection]:
             current_field = "action_value"
             if rest:
                 current_template.action_value = rest
+            continue
+
+        if _is_standalone_label(para_upper, ACTION_KEY_LABELS):
+            current_field = "action_key"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS)
+            current_field = "action_key"
+            if rest:
+                current_template.action_key = rest
             continue
 
         # Content line — append to current field

@@ -2321,7 +2321,6 @@ setTimeout(function() { clearInterval(_qdi); }, 15000);
 #  Fragment renderers — each section reruns independently on widget interaction
 # ---------------------------------------------------------------------------
 
-@st.fragment
 def render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch):
     """Render SMS templates column as an independent fragment."""
     st.subheader("📱 SMS Templates")
@@ -2418,10 +2417,6 @@ def render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
     else:
         st.warning("No SMS templates found")
 
-    save_session_to_disk()
-
-
-@st.fragment
 def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch):
     """Render OMS templates column as an independent fragment."""
     st.subheader("📧 OMS Templates")
@@ -2595,10 +2590,6 @@ def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
     else:
         st.warning("No OMS templates found")
 
-    save_session_to_disk()
-
-
-@st.fragment
 def render_tc_fragment(selected_doc, selected_lang):
     """Render Terms & Conditions section as an independent fragment."""
     st.subheader("📋 Terms & Conditions")
@@ -2700,8 +2691,6 @@ def render_tc_fragment(selected_doc, selected_lang):
             )
         if not edited_full.strip():
             st.warning("⚠️ Full T&Cs is empty")
-
-    save_session_to_disk()
 
 
 # Page config
@@ -3806,6 +3795,8 @@ def _render_review_fragment():
             render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
 
         render_tc_fragment(selected_doc, selected_lang)
+
+    save_session_to_disk()
 
 
 def _restore_session_from_disk() -> bool:

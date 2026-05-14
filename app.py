@@ -2009,6 +2009,13 @@ def _autosave_path(upload_key: str) -> Path:
     return _AUTOSAVE_DIR / f"{safe_key}.json"
 
 
+def _autosave_zip_path(upload_key: str) -> Path:
+    """Return the companion ZIP file path for a given upload key."""
+    _AUTOSAVE_DIR.mkdir(exist_ok=True)
+    safe_key = re.sub(r'[^\w\-.]', '_', upload_key)
+    return _AUTOSAVE_DIR / f"{safe_key}.zip"
+
+
 def save_session_to_disk() -> None:
     """Auto-save editor state to disk for recovery after browser refresh."""
     upload_key = st.session_state.get("upload_file_key")
@@ -2016,6 +2023,7 @@ def save_session_to_disk() -> None:
         return
     save_data = {
         "upload_file_key": upload_key,
+        "document_name": st.session_state.get("document_name", ""),
         "editor_values": st.session_state.get("editor_values", {}),
         "offer_key": st.session_state.get("offer_key", ""),
         "task_type": st.session_state.get("task_type", ""),
@@ -2037,6 +2045,22 @@ def save_session_to_disk() -> None:
         pass
 
 
+def save_zip_to_disk(uploaded_file) -> None:
+    """Save the uploaded ZIP bytes to disk so the session can be restored without re-upload."""
+    upload_key = st.session_state.get("upload_file_key")
+    if not upload_key:
+        return
+    zip_path = _autosave_zip_path(upload_key)
+    if zip_path.exists():
+        return  # already saved
+    try:
+        uploaded_file.seek(0)
+        zip_path.write_bytes(uploaded_file.read())
+        uploaded_file.seek(0)
+    except OSError:
+        pass
+
+
 def load_session_from_disk(upload_key: str) -> dict | None:
     """Load previously saved session if it exists and is recent (< 24 h)."""
     try:
@@ -2047,10 +2071,32 @@ def load_session_from_disk(upload_key: str) -> dict | None:
         saved_at = datetime.fromisoformat(data.get("saved_at", ""))
         if datetime.now() - saved_at > timedelta(hours=24):
             path.unlink(missing_ok=True)
+            _autosave_zip_path(upload_key).unlink(missing_ok=True)
             return None
         return data
     except (json.JSONDecodeError, OSError, ValueError):
         return None
+
+
+def find_latest_autosave() -> dict | None:
+    """Scan autosave directory for the most recent valid session (< 24 h) that has a companion ZIP."""
+    if not _AUTOSAVE_DIR.exists():
+        return None
+    best = None
+    for f in _AUTOSAVE_DIR.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            saved_at = datetime.fromisoformat(data.get("saved_at", ""))
+            if datetime.now() - saved_at > timedelta(hours=24):
+                continue
+            zip_path = f.with_suffix(".zip")
+            if not zip_path.exists():
+                continue
+            if best is None or saved_at > datetime.fromisoformat(best.get("saved_at", "")):
+                best = data
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+    return best
 
 
 def _cleanup_old_autosaves() -> None:
@@ -2064,8 +2110,10 @@ def _cleanup_old_autosaves() -> None:
             saved_at = datetime.fromisoformat(data.get("saved_at", ""))
             if saved_at < cutoff:
                 f.unlink(missing_ok=True)
+                f.with_suffix(".zip").unlink(missing_ok=True)
         except (json.JSONDecodeError, OSError, ValueError):
             f.unlink(missing_ok=True)
+            f.with_suffix(".zip").unlink(missing_ok=True)
 
 
 def _append_sms_link(body: str, link: str) -> str:
@@ -3611,7 +3659,89 @@ def render_console_section_header(kicker: str, title: str, subtitle: str) -> Non
     )
 
 
+def _restore_session_from_disk() -> bool:
+    """Attempt to restore a full session from disk autosave (ZIP + editor state).
+
+    Called at the start of main() before the sidebar renders.
+    Returns True if a session was restored, False otherwise.
+    """
+    if "parsed_docs" in st.session_state:
+        return False  # already loaded — nothing to do
+
+    saved = find_latest_autosave()
+    if not saved:
+        return False
+
+    upload_key = saved.get("upload_file_key", "")
+    zip_path = _autosave_zip_path(upload_key)
+    if not zip_path.exists():
+        return False
+
+    # Re-parse from saved ZIP bytes
+    temp_dir = Path(tempfile.mkdtemp())
+    try:
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
+        docx_files = list(temp_dir.rglob("*.docx"))
+        if not docx_files:
+            return False
+        docs_folder = docx_files[0].parent
+        parsed_docs = parse_documents_from_folder(docs_folder)
+    except Exception:
+        return False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    # Detect variants
+    detected_variants = set()
+    for doc in parsed_docs:
+        for section in (doc.launch_oms, doc.reminder_oms, doc.reward_oms, doc.launch_sms, doc.reminder_sms):
+            if section:
+                for t in section.templates:
+                    detected_variants.add(t.variant)
+
+    detection = detect_offer_type(parsed_docs)
+
+    # Populate session state
+    st.session_state["parsed_docs"] = parsed_docs
+    st.session_state["original_parsed_docs"] = copy.deepcopy(parsed_docs)
+    st.session_state["document_name"] = saved.get("document_name", "Restored session")
+    st.session_state["upload_timestamp"] = datetime.now()
+    st.session_state["upload_file_key"] = upload_key
+    st.session_state["auto_detection"] = detection
+    st.session_state["qa_fixes_applied"] = {}
+    st.session_state["qa_fix_details"] = {}
+    st.session_state["qa_content_edit_events"] = []
+    st.session_state["qa_fix_events"] = []
+    st.session_state["variants"] = sorted(detected_variants)
+    st.session_state["apply_detection"] = True
+
+    # Restore editor values
+    if saved.get("editor_values"):
+        st.session_state["editor_values"] = saved["editor_values"]
+    else:
+        st.session_state["editor_values"] = {}
+
+    # Restore sidebar config into session_state for widget defaults
+    for key in ("offer_key", "task_type", "reward_type", "bonus_product",
+                "send_conditions", "image_key", "image_id", "image_file", "image_display"):
+        if key in saved:
+            st.session_state[key] = saved[key]
+
+    if saved.get("qa_last_selected_lang"):
+        st.session_state["qa_last_selected_lang"] = saved["qa_last_selected_lang"]
+        st.session_state["qa_language_select"] = saved["qa_last_selected_lang"]
+
+    # Flag so the UI can show a toast
+    st.session_state["_autosave_just_restored"] = True
+    _cleanup_old_autosaves()
+    return True
+
+
 def main():
+    # Attempt to restore a previous session from disk before anything renders
+    _restore_session_from_disk()
+
     render_review_console_hero()
     
     # Sidebar for configuration
@@ -3800,11 +3930,25 @@ def main():
                 unsafe_allow_html=True,
             )
     
+    # Show toast when session was just restored from disk
+    if st.session_state.pop("_autosave_just_restored", False):
+        st.toast("♻️ Previous session restored — your edits are back!")
+
     # Main content area
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["Upload", "Review", "Export", "Compare", "Help"])
     
     with tab1:
         st.header("Step 1: Upload Content")
+
+        # If session was restored from disk, show info banner
+        if "parsed_docs" in st.session_state and not st.session_state.get("content_zip"):
+            doc_name = st.session_state.get("document_name", "")
+            st.info(
+                f"♻️ **Session restored** from `{doc_name}`. "
+                "Your edits are intact — head to the **Review** tab to continue. "
+                "Upload a new ZIP below to start over.",
+                icon="♻️",
+            )
         
         st.subheader("📄 Localized Content (Word Docs)")
         uploaded_file = st.file_uploader(
@@ -3904,6 +4048,9 @@ def main():
                         if saved.get("qa_last_selected_lang"):
                             st.session_state["qa_language_select"] = saved["qa_last_selected_lang"]
                         st.toast("♻️ Previous edits restored — your work is back!")
+
+                    # Save the ZIP bytes to disk for session recovery without re-upload
+                    save_zip_to_disk(uploaded_file)
                     _cleanup_old_autosaves()
 
                 st.session_state["offer_key"] = offer_key
@@ -4788,13 +4935,14 @@ def main():
         Your edits are **automatically saved to disk** as you work. If the browser refreshes
         or you accidentally close the tab:
         
-        1. Re-upload **the same ZIP file**
-        2. Your previous edits (SMS, OMS, T&C changes, language position) are restored automatically
-        3. A toast notification confirms recovery: *"♻️ Previous edits restored"*
+        1. Simply **reopen the app** — your previous session is restored automatically
+        2. The ZIP file, all edits (SMS, OMS, T&C), sidebar config, and language position are recovered
+        3. A toast notification confirms recovery: *"♻️ Previous session restored"*
+        4. No need to re-upload the file — just head to the **Review** tab and continue
         
         **Notes:**
-        - Autosave matches by filename + file size — uploading a different ZIP starts fresh
         - Saved sessions expire after **24 hours**
+        - Uploading a new/different ZIP starts a fresh session
         - On Streamlit Cloud, autosaves survive browser refresh but not app redeployment
         
         ---

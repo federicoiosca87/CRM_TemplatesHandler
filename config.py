@@ -11,21 +11,32 @@ LANGUAGE_MAPPING = {
     "EN_EE": ["en-ee"],
     "EN_ET": ["en-ee"],     # EN_ET prefix also maps to English (Estonia)
     "EN_CA": ["en-ca"],     # English (Canada)
+    "EN_LV": ["en-lv"],     # English (Latvia)
+    "EN_HI": ["en-hi"],     # English (India)
+    "EN_BE": ["en-be"],     # English (Belgium)
     "EN_TR": ["en-tr"],
     "ARG": ["es-ar-ba", "es-ar-ca", "es-ar-co"],  # All Argentina regions
+    "ARBA": ["es-ar-ba"],   # Argentina Buenos Aires (individual)
+    "AR_CABA": ["es-ar-ca"],# Argentina CABA (individual)
+    "ARCABA": ["es-ar-ca"], # Argentina CABA (alternate prefix)
+    "ARCB": ["es-ar-co"],   # Argentina Córdoba (individual)
     "BR": ["br"],
     "CL": ["cl"],
     "CO": ["co"],
     "DA": ["da"],
     "EL": ["el"],
     "ES": ["es"],
+    "ES_XL": ["es-xl"],     # Spanish (Betsson LatAm)
     "ET": ["et"],
     "FI": ["fi"],
+    "FR": ["fr"],
     "GR": ["el"],  # Greek uses 'el' code in CMS
+    "HI": ["hi"],
     "IS": ["is"],
     "IT": ["it"],
     "LV": ["lv"],
     "MX": ["mx"],
+    "NL": ["nl"],
     "NO": ["no"],
     "PE": ["pe"],
     "PL": ["pl"],
@@ -51,21 +62,32 @@ LANGUAGE_NAMES = {
     "EN_EE": "English (Estonia)",
     "EN_ET": "English (Estonia)",
     "EN_CA": "English (Canada)",
+    "EN_LV": "English (Latvia)",
+    "EN_HI": "English (India)",
+    "EN_BE": "English (Belgium)",
     "EN_TR": "English (Turkey)",
     "ARG": "Spanish (Argentina)",
+    "ARBA": "Spanish (Argentina - Buenos Aires)",
+    "AR_CABA": "Spanish (Argentina - CABA)",
+    "ARCABA": "Spanish (Argentina - CABA)",
+    "ARCB": "Spanish (Argentina - Córdoba)",
     "BR": "Portuguese (Brazil)",
     "CL": "Spanish (Chile)",
     "CO": "Spanish (Colombia)",
     "DA": "Danish",
     "EL": "Greek",
     "ES": "Spanish",
+    "ES_XL": "Spanish (LatAm)",
     "ET": "Estonian",
     "FI": "Finnish",
+    "FR": "French",
     "GR": "Greek",
+    "HI": "Hindi",
     "IS": "Icelandic",
     "IT": "Italian",
     "LV": "Latvian",
     "MX": "Spanish (Mexico)",
+    "NL": "Dutch",
     "NO": "Norwegian",
     "PE": "Spanish (Peru)",
     "PL": "Polish",
@@ -106,21 +128,32 @@ LANGUAGE_TO_MARKET = {
     "EN_EE": "Estonia",
     "EN_ET": "Estonia",
     "EN_CA": "Canada",
+    "EN_LV": "Latvia",
+    "EN_HI": "India",
+    "EN_BE": "Belgium",
     "EN_TR": "Turkey",
     "ARG": "Argentina",
+    "ARBA": "Argentina",
+    "AR_CABA": "Argentina",
+    "ARCABA": "Argentina",
+    "ARCB": "Argentina",
     "BR": "Brazil",
     "CL": "Chile",
     "CO": "Colombia",
     "DA": "Sweden",  # Danish speakers in Nordic region
     "EL": "Greece",
     "ES": "Realm",  # Generic Spanish
+    "ES_XL": "LatAm",
     "ET": "Estonia",
     "FI": "Finland",
+    "FR": "Realm",  # French (generic)
     "GR": "Greece",
+    "HI": "India",
     "IS": "Realm",  # Iceland
     "IT": "Italy",
     "LV": "Latvia",
     "MX": "Mexico",
+    "NL": "Netherlands",
     "NO": "Norway",
     "PE": "Peru",
     "PL": "Poland",

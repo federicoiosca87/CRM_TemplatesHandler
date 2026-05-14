@@ -345,6 +345,13 @@ def generate_language_mismatch_report(parsed_docs: list[ParsedDocument]) -> dict
                         if not is_structural_chunk(template.body):
                             content_chunks.append(template.body)
 
+        for section in [doc.launch_push, doc.reminder_push, doc.reward_push]:
+            if section and hasattr(section, "templates"):
+                for template in section.templates:
+                    chunk = " ".join(part for part in [template.title, template.body] if part)
+                    if chunk and not is_structural_chunk(chunk):
+                        content_chunks.append(chunk)
+
         # Fallback to raw paragraphs only when section parsing found no usable chunks.
         if not content_chunks and getattr(doc, "raw_paragraphs", None):
             for para in doc.raw_paragraphs:
@@ -761,6 +768,24 @@ def collect_content_edit_log(original_docs: list[ParsedDocument], current_docs: 
                 append_if_changed(logs, lang, f"OMS Claimed Reward {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
                 append_if_changed(logs, lang, f"OMS Claimed Reward {tmpl.variant} CTA", old_t.cta if old_t else "", tmpl.cta)
 
+        if original.launch_push and current.launch_push:
+            for idx, tmpl in enumerate(current.launch_push.templates):
+                old_t = original.launch_push.templates[idx] if idx < len(original.launch_push.templates) else None
+                append_if_changed(logs, lang, f"Push Launch {tmpl.variant} Title", old_t.title if old_t else "", tmpl.title)
+                append_if_changed(logs, lang, f"Push Launch {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
+
+        if original.reminder_push and current.reminder_push:
+            for idx, tmpl in enumerate(current.reminder_push.templates):
+                old_t = original.reminder_push.templates[idx] if idx < len(original.reminder_push.templates) else None
+                append_if_changed(logs, lang, f"Push Reminder {tmpl.variant} Title", old_t.title if old_t else "", tmpl.title)
+                append_if_changed(logs, lang, f"Push Reminder {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
+
+        if original.reward_push and current.reward_push:
+            for idx, tmpl in enumerate(current.reward_push.templates):
+                old_t = original.reward_push.templates[idx] if idx < len(original.reward_push.templates) else None
+                append_if_changed(logs, lang, f"Push Claimed Reward {tmpl.variant} Title", old_t.title if old_t else "", tmpl.title)
+                append_if_changed(logs, lang, f"Push Claimed Reward {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
+
         if original.tc and current.tc:
             append_if_changed(logs, lang, "T&C Significant Terms", original.tc.significant_terms, current.tc.significant_terms)
             append_if_changed(logs, lang, "T&C Full Terms", original.tc.terms_and_conditions, current.tc.terms_and_conditions)
@@ -917,6 +942,47 @@ def apply_safe_fixes_for_language(selected_lang: str, selected_doc: ParsedDocume
             )
             oms_idx += 1
 
+    push_idx = 0
+    if selected_doc.launch_push:
+        for template in selected_doc.launch_push.templates:
+            apply_on_widget_key(
+                f"push_title_{selected_lang}_{push_idx}_Launch_{template.variant}",
+                template.title or "",
+                f"Push Launch {template.variant} Title",
+            )
+            apply_on_widget_key(
+                f"push_body_{selected_lang}_{push_idx}_Launch_{template.variant}",
+                template.body or "",
+                f"Push Launch {template.variant} Body",
+            )
+            push_idx += 1
+    if selected_doc.reminder_push:
+        for template in selected_doc.reminder_push.templates:
+            apply_on_widget_key(
+                f"push_title_{selected_lang}_{push_idx}_Reminder_{template.variant}",
+                template.title or "",
+                f"Push Reminder {template.variant} Title",
+            )
+            apply_on_widget_key(
+                f"push_body_{selected_lang}_{push_idx}_Reminder_{template.variant}",
+                template.body or "",
+                f"Push Reminder {template.variant} Body",
+            )
+            push_idx += 1
+    if selected_doc.reward_push:
+        for template in selected_doc.reward_push.templates:
+            apply_on_widget_key(
+                f"push_title_{selected_lang}_{push_idx}_Reward_{template.variant}",
+                template.title or "",
+                f"Push Claimed Reward {template.variant} Title",
+            )
+            apply_on_widget_key(
+                f"push_body_{selected_lang}_{push_idx}_Reward_{template.variant}",
+                template.body or "",
+                f"Push Claimed Reward {template.variant} Body",
+            )
+            push_idx += 1
+
     if selected_doc.tc:
         apply_on_widget_key(
             f"tc_sig_{selected_lang}",
@@ -977,6 +1043,23 @@ def count_safe_fixes_for_language(selected_lang: str, selected_doc: ParsedDocume
             count_on_widget_key(f"oms_body_{selected_lang}_{oms_idx}_Reward_{template.variant}", template.body or "")
             count_on_widget_key(f"oms_cta_{selected_lang}_{oms_idx}_Reward_{template.variant}", template.cta or "")
             oms_idx += 1
+
+    push_idx = 0
+    if selected_doc.launch_push:
+        for template in selected_doc.launch_push.templates:
+            count_on_widget_key(f"push_title_{selected_lang}_{push_idx}_Launch_{template.variant}", template.title or "")
+            count_on_widget_key(f"push_body_{selected_lang}_{push_idx}_Launch_{template.variant}", template.body or "")
+            push_idx += 1
+    if selected_doc.reminder_push:
+        for template in selected_doc.reminder_push.templates:
+            count_on_widget_key(f"push_title_{selected_lang}_{push_idx}_Reminder_{template.variant}", template.title or "")
+            count_on_widget_key(f"push_body_{selected_lang}_{push_idx}_Reminder_{template.variant}", template.body or "")
+            push_idx += 1
+    if selected_doc.reward_push:
+        for template in selected_doc.reward_push.templates:
+            count_on_widget_key(f"push_title_{selected_lang}_{push_idx}_Reward_{template.variant}", template.title or "")
+            count_on_widget_key(f"push_body_{selected_lang}_{push_idx}_Reward_{template.variant}", template.body or "")
+            push_idx += 1
 
     if selected_doc.tc:
         count_on_widget_key(f"tc_sig_{selected_lang}", selected_doc.tc.significant_terms or "")
@@ -1722,6 +1805,9 @@ def check_template_consistency(parsed_docs: list) -> dict:
             "reward_oms": set(),
             "launch_sms": set(),
             "reminder_sms": set(),
+            "launch_push": set(),
+            "reminder_push": set(),
+            "reward_push": set(),
         }
         
         if doc.launch_oms:
@@ -1734,6 +1820,12 @@ def check_template_consistency(parsed_docs: list) -> dict:
             variants["launch_sms"] = {t.variant for t in doc.launch_sms.templates}
         if doc.reminder_sms:
             variants["reminder_sms"] = {t.variant for t in doc.reminder_sms.templates}
+        if doc.launch_push:
+            variants["launch_push"] = {t.variant for t in doc.launch_push.templates}
+        if doc.reminder_push:
+            variants["reminder_push"] = {t.variant for t in doc.reminder_push.templates}
+        if doc.reward_push:
+            variants["reward_push"] = {t.variant for t in doc.reward_push.templates}
         
         report["by_language"][lang] = variants
     
@@ -1743,7 +1835,7 @@ def check_template_consistency(parsed_docs: list) -> dict:
         total_langs = len(report["by_language"])
         threshold = total_langs / 2
 
-        for section in ["launch_oms", "reminder_oms", "reward_oms", "launch_sms", "reminder_sms"]:
+        for section in ["launch_oms", "reminder_oms", "reward_oms", "launch_sms", "reminder_sms", "launch_push", "reminder_push", "reward_push"]:
             # Count how many languages have each variant
             variant_counts: dict[str, int] = {}
             for variants in report["by_language"].values():
@@ -1829,6 +1921,26 @@ def generate_missing_content_report(parsed_docs: list) -> dict:
                 issues.append("⚠️ T&C: Missing significant terms")
             if not doc.tc.terms_and_conditions or not doc.tc.terms_and_conditions.strip():
                 issues.append("⚠️ T&C: Missing full terms")
+
+        # Check Push Notification templates (optional — only flag if section exists)
+        if doc.launch_push:
+            for t in doc.launch_push.templates:
+                if not t.title or not t.title.strip():
+                    issues.append(f"⚠️ Launch Push {t.variant}: Missing title")
+                if not t.body or not t.body.strip():
+                    issues.append(f"⚠️ Launch Push {t.variant}: Missing body")
+        if doc.reminder_push:
+            for t in doc.reminder_push.templates:
+                if not t.title or not t.title.strip():
+                    issues.append(f"⚠️ Reminder Push {t.variant}: Missing title")
+                if not t.body or not t.body.strip():
+                    issues.append(f"⚠️ Reminder Push {t.variant}: Missing body")
+        if doc.reward_push:
+            for t in doc.reward_push.templates:
+                if not t.title or not t.title.strip():
+                    issues.append(f"⚠️ Reward Push {t.variant}: Missing title")
+                if not t.body or not t.body.strip():
+                    issues.append(f"⚠️ Reward Push {t.variant}: Missing body")
         
         report["by_language"][lang] = issues
         report["total_issues"] += len(issues)
@@ -1876,6 +1988,17 @@ def generate_invalid_placeholder_report(parsed_docs: list) -> dict:
         # T&C
         if doc.tc:
             invalid_tokens.extend(validate_placeholders((doc.tc.significant_terms or "") + " " + (doc.tc.terms_and_conditions or "")))
+
+        # Push Notifications
+        if doc.launch_push:
+            for t in doc.launch_push.templates:
+                invalid_tokens.extend(validate_placeholders((t.title or "") + " " + (t.body or "")))
+        if doc.reminder_push:
+            for t in doc.reminder_push.templates:
+                invalid_tokens.extend(validate_placeholders((t.title or "") + " " + (t.body or "")))
+        if doc.reward_push:
+            for t in doc.reward_push.templates:
+                invalid_tokens.extend(validate_placeholders((t.title or "") + " " + (t.body or "")))
 
         report["by_language"][lang] = {
             "count": len(invalid_tokens),
@@ -2231,6 +2354,42 @@ def build_effective_parsed_docs(parsed_docs: list[ParsedDocument]) -> list[Parse
             full_key = f"tc_full_{lang}"
             doc.tc.significant_terms = get_effective_widget_value(sig_key, doc.tc.significant_terms or "")
             doc.tc.terms_and_conditions = get_effective_widget_value(full_key, doc.tc.terms_and_conditions or "")
+
+        # Push Notification edits
+        push_idx = 0
+        if doc.launch_push:
+            for template in doc.launch_push.templates:
+                title_key = f"push_title_{lang}_{push_idx}_Launch_{template.variant}"
+                body_key = f"push_body_{lang}_{push_idx}_Launch_{template.variant}"
+                ak_key = f"push_actionkey_{lang}_{push_idx}_Launch_{template.variant}"
+                av_key = f"push_actionvalue_{lang}_{push_idx}_Launch_{template.variant}"
+                template.title = get_effective_widget_value(title_key, template.title or "")
+                template.body = get_effective_widget_value(body_key, template.body or "")
+                template.action_key = get_effective_widget_value(ak_key, template.action_key or "")
+                template.action_value = get_effective_widget_value(av_key, template.action_value or "")
+                push_idx += 1
+        if doc.reminder_push:
+            for template in doc.reminder_push.templates:
+                title_key = f"push_title_{lang}_{push_idx}_Reminder_{template.variant}"
+                body_key = f"push_body_{lang}_{push_idx}_Reminder_{template.variant}"
+                ak_key = f"push_actionkey_{lang}_{push_idx}_Reminder_{template.variant}"
+                av_key = f"push_actionvalue_{lang}_{push_idx}_Reminder_{template.variant}"
+                template.title = get_effective_widget_value(title_key, template.title or "")
+                template.body = get_effective_widget_value(body_key, template.body or "")
+                template.action_key = get_effective_widget_value(ak_key, template.action_key or "")
+                template.action_value = get_effective_widget_value(av_key, template.action_value or "")
+                push_idx += 1
+        if doc.reward_push:
+            for template in doc.reward_push.templates:
+                title_key = f"push_title_{lang}_{push_idx}_Reward_{template.variant}"
+                body_key = f"push_body_{lang}_{push_idx}_Reward_{template.variant}"
+                ak_key = f"push_actionkey_{lang}_{push_idx}_Reward_{template.variant}"
+                av_key = f"push_actionvalue_{lang}_{push_idx}_Reward_{template.variant}"
+                template.title = get_effective_widget_value(title_key, template.title or "")
+                template.body = get_effective_widget_value(body_key, template.body or "")
+                template.action_key = get_effective_widget_value(ak_key, template.action_key or "")
+                template.action_value = get_effective_widget_value(av_key, template.action_value or "")
+                push_idx += 1
 
     return effective_docs
 
@@ -2619,6 +2778,89 @@ def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
                     st.warning(warn)
     else:
         st.warning("No OMS templates found")
+
+def render_push_fragment(selected_doc, selected_lang, selected_lang_has_mismatch):
+    """Render Push Notification templates as an independent section."""
+    st.subheader("🔔 Push Notifications")
+
+    all_push_templates = []
+    if selected_doc.launch_push:
+        for t in selected_doc.launch_push.templates:
+            all_push_templates.append(("Launch", t))
+    if selected_doc.reminder_push:
+        for t in selected_doc.reminder_push.templates:
+            all_push_templates.append(("Reminder", t))
+    if selected_doc.reward_push:
+        for t in selected_doc.reward_push.templates:
+            all_push_templates.append(("Reward", t))
+
+    if all_push_templates:
+        for idx, (push_type, template) in enumerate(all_push_templates):
+            push_title = template.title or ""
+            push_body = template.body or ""
+            push_action_key = template.action_key or ""
+            push_action_value = template.action_value or ""
+
+            title_key = f"push_title_{selected_lang}_{idx}_{push_type}_{template.variant}"
+            body_key = f"push_body_{selected_lang}_{idx}_{push_type}_{template.variant}"
+            action_key_key = f"push_actionkey_{selected_lang}_{idx}_{push_type}_{template.variant}"
+            action_value_key = f"push_actionvalue_{selected_lang}_{idx}_{push_type}_{template.variant}"
+
+            invalid_placeholders = validate_placeholders(
+                (get_effective_widget_value(title_key, push_title) or "") + " " +
+                (get_effective_widget_value(body_key, push_body) or "")
+            )
+            missing = check_missing_content("OMS", title=get_effective_widget_value(title_key, push_title),
+                                            body=get_effective_widget_value(body_key, push_body))
+
+            push_flags: list[str] = []
+            if invalid_placeholders:
+                push_flags.append("✖")
+            if missing:
+                push_flags.append("⚠")
+            if not push_flags:
+                push_flags.append("✅")
+            if selected_lang_has_mismatch:
+                push_flags.append("🌐")
+
+            expander_label = f"{' '.join(push_flags)} {push_type} - Template {template.variant} ({template.send_condition})"
+
+            with st.expander(expander_label):
+                edited_title = _managed_text_input("Title", title_key, push_title)
+                edited_body = _managed_text_area("Body", body_key, push_body, height=100)
+                edited_action_key = _managed_text_input("Action Key", action_key_key, push_action_key,
+                                                        help="Deep-link target (e.g. deposit, casino)")
+                edited_action_value = _managed_text_input("Action Value", action_value_key, push_action_value,
+                                                          help="Additional deep-link parameter (optional)")
+
+                title_invalid = validate_placeholders(edited_title)
+                if title_invalid:
+                    fix_buffer_key = f"fix_buffer_{title_key}"
+                    render_invalid_placeholder_assistant(
+                        field_label="Title",
+                        text=edited_title,
+                        fix_buffer_key=fix_buffer_key,
+                        button_key=f"fix_{title_key}",
+                        language_code=selected_lang,
+                        tracking_field_label=f"Push {push_type} {template.variant} Title",
+                    )
+
+                body_invalid = validate_placeholders(edited_body)
+                if body_invalid:
+                    fix_buffer_key = f"fix_buffer_{body_key}"
+                    render_invalid_placeholder_assistant(
+                        field_label="Body",
+                        text=edited_body,
+                        fix_buffer_key=fix_buffer_key,
+                        button_key=f"fix_{body_key}",
+                        language_code=selected_lang,
+                        tracking_field_label=f"Push {push_type} {template.variant} Body",
+                    )
+
+                for warn in check_missing_content("OMS", title=edited_title, body=edited_body):
+                    st.warning(warn)
+    else:
+        st.info("No Push Notification templates found")
 
 def render_tc_fragment(selected_doc, selected_lang):
     """Render Terms & Conditions section as an independent fragment."""
@@ -3827,6 +4069,11 @@ def _render_review_fragment():
         with col2:
             render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
 
+        # Push notifications (shown only if templates exist for any language)
+        has_push = selected_doc.launch_push or selected_doc.reminder_push or selected_doc.reward_push
+        if has_push:
+            render_push_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+
         render_tc_fragment(selected_doc, selected_lang)
 
     save_session_to_disk()
@@ -3868,7 +4115,7 @@ def _restore_session_from_disk() -> bool:
     # Detect variants
     detected_variants = set()
     for doc in parsed_docs:
-        for section in (doc.launch_oms, doc.reminder_oms, doc.reward_oms, doc.launch_sms, doc.reminder_sms):
+        for section in (doc.launch_oms, doc.reminder_oms, doc.reward_oms, doc.launch_sms, doc.reminder_sms, doc.launch_push, doc.reminder_push, doc.reward_push):
             if section:
                 for t in section.templates:
                     detected_variants.add(t.variant)
@@ -4183,6 +4430,15 @@ def main():
                                     detected_variants.add(t.variant)
                             if doc.reminder_sms:
                                 for t in doc.reminder_sms.templates:
+                                    detected_variants.add(t.variant)
+                            if doc.launch_push:
+                                for t in doc.launch_push.templates:
+                                    detected_variants.add(t.variant)
+                            if doc.reminder_push:
+                                for t in doc.reminder_push.templates:
+                                    detected_variants.add(t.variant)
+                            if doc.reward_push:
+                                for t in doc.reward_push.templates:
                                     detected_variants.add(t.variant)
                         
                         # Auto-detect offer type from content

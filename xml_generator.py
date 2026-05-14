@@ -79,6 +79,14 @@ def _generate_document_type_description_xml(content_type_name: str, comment: str
 <DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>taskType</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>1</SortOrder></DocumentMeta>
 <DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>sendCondition</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>2</SortOrder></DocumentMeta>
 </DocumentMetaList>'''
+    elif template_type == "PUSH":
+        # PUSH has: image (linked), rewardType, taskType, sendCondition, bonusProduct
+        meta_list = f'''<DocumentMetaList><DocumentMeta IsBoolean="False" IsLink="True" IsList="False"><Key>image</Key><Active>True</Active><LinkData>{image_link_data}</LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>0</SortOrder></DocumentMeta>
+<DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>rewardType</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>1</SortOrder></DocumentMeta>
+<DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>taskType</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>2</SortOrder></DocumentMeta>
+<DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>sendCondition</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>3</SortOrder></DocumentMeta>
+<DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>bonusProduct</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>4</SortOrder></DocumentMeta>
+</DocumentMetaList>'''
     else:  # TC
         # TC has: rewardType, taskType
         meta_list = '''<DocumentMetaList><DocumentMeta IsBoolean="False" IsLink="False" IsList="True"><Key>rewardType</Key><Active>True</Active><LinkData></LinkData><MinCount>1</MinCount><MaxCount>1</MaxCount><SortOrder>0</SortOrder></DocumentMeta>
@@ -453,6 +461,47 @@ class CmsXmlGenerator:
         
         return self._prettify_xml(root)
 
+    def generate_push_xml_from_templates(
+        self,
+        market: str,
+        templates: list[TemplateContent],
+    ) -> str:
+        """Generate Push Notification template XML using send_condition from each template."""
+        content_type = TEMPLATE_TYPES["PUSH"]["content_type_name"]
+        root = self._create_content_list_element(content_type, market)
+
+        for template in templates:
+            if template.variant not in self.variants:
+                continue
+
+            send_condition = template.send_condition
+            variant_suffix = f"-Template{template.variant}"
+            if send_condition.endswith(variant_suffix):
+                key = f"{content_type}.{self.offer_key}-{send_condition}"
+            else:
+                key = f"{content_type}.{self.offer_key}-{send_condition}{variant_suffix}"
+
+            content_items = [
+                ("Title", "Title", template.title or ""),
+                ("Body", "Text", template.body or ""),
+                ("ActionKey", "Title", template.action_key or ""),
+                ("ActionValue", "Title", template.action_value or ""),
+                ("TemplateName", "Title", f"Template{template.variant}"),
+            ]
+
+            metadata = {
+                "rewardType": self.reward_type,
+                "taskType": self.task_type,
+                "sendCondition": send_condition,
+            }
+            if self.bonus_product:
+                metadata["bonusProduct"] = self.bonus_product
+
+            content = self._create_content_element(content_type, key, content_items, metadata, include_image=True)
+            root.append(content)
+
+        return self._prettify_xml(root)
+
     def generate_tc_xml(
         self,
         market: str,
@@ -524,7 +573,11 @@ def generate_cms_packages(
     
     output_paths = {}
     
-    for template_type in ["SMS", "OMS", "TC"]:
+    for template_type in ["SMS", "OMS", "PUSH", "TC"]:
+        # Skip PUSH if no documents have push notification sections
+        if template_type == "PUSH" and not any(d.launch_push or d.reminder_push or d.reward_push for d in parsed_docs):
+            continue
+
         content_type_name = TEMPLATE_TYPES[template_type]["content_type_name"]
         type_output_dir = output_dir / content_type_name
         type_output_dir.mkdir(parents=True, exist_ok=True)
@@ -608,6 +661,18 @@ def generate_cms_packages(
                             doc.tc.significant_terms or "",
                             doc.tc.terms_and_conditions or "",
                         )
+                        _write_content_xml(market_dir, xml_content)
+
+                elif template_type == "PUSH":
+                    all_push_templates = []
+                    if doc.launch_push:
+                        all_push_templates.extend(doc.launch_push.templates)
+                    if doc.reminder_push:
+                        all_push_templates.extend(doc.reminder_push.templates)
+                    if doc.reward_push:
+                        all_push_templates.extend(doc.reward_push.templates)
+                    if all_push_templates:
+                        xml_content = generator.generate_push_xml_from_templates(market, all_push_templates)
                         _write_content_xml(market_dir, xml_content)
         
         output_paths[template_type] = type_output_dir

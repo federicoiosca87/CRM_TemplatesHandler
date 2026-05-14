@@ -126,6 +126,8 @@ def _paragraph_to_bbcode(para) -> str:
 TITLE_LABELS = {"TITLE", "PEALKIRI", "TITILL", "TÍTULO", "TITULO"}
 BODY_LABELS = {"BODY", "MEGINMÁL", "MEGINMAL", "CUERPO"}
 CTA_LABELS = {"CTA", "CALL TO ACTION", "CALLTOACTION"}
+ACTION_KEY_LABELS = {"ACTION KEY", "ACTIONKEY", "ACTION"}
+ACTION_VALUE_LABELS = {"ACTION VALUE", "ACTIONVALUE"}
 
 
 def _is_label_start(text_upper: str, labels: set[str]) -> bool:
@@ -158,6 +160,8 @@ class TemplateContent:
     body: Optional[str] = None
     cta: Optional[str] = None
     cta_mobile: Optional[str] = None
+    action_key: Optional[str] = None
+    action_value: Optional[str] = None
     send_condition: str = "JoinedCampaign"  # JoinedCampaign (Launch) or NotOptedIn (Reminder)
 
 
@@ -172,6 +176,13 @@ class OmsSection:
 class SmsSection:
     """SMS section (Launch or Reminder) with multiple template variants."""
     section_type: str  # "Launch" or "Reminder"
+    templates: list[TemplateContent] = field(default_factory=list)
+
+
+@dataclass
+class PushSection:
+    """Push notification section (Launch, Reminder, or Reward) with multiple template variants."""
+    section_type: str  # "Launch", "Reminder", or "Reward"
     templates: list[TemplateContent] = field(default_factory=list)
 
 
@@ -202,6 +213,9 @@ class ParsedDocument:
     reward_oms: Optional[OmsSection] = None
     launch_sms: Optional[SmsSection] = None
     reminder_sms: Optional[SmsSection] = None
+    launch_push: Optional[PushSection] = None
+    reminder_push: Optional[PushSection] = None
+    reward_push: Optional[PushSection] = None
     tc: Optional[TcSection] = None
     raw_paragraphs: list[str] = field(default_factory=list)
 
@@ -323,6 +337,9 @@ def parse_word_document(file_path: Path) -> ParsedDocument:
     parsed.reward_oms = _parse_reward_oms_section(paragraphs)
     parsed.launch_sms = _parse_sms_section(paragraphs, "Launch")
     parsed.reminder_sms = _parse_sms_section(paragraphs, "Reminder")
+    parsed.launch_push = _parse_push_section(paragraphs, "Launch")
+    parsed.reminder_push = _parse_push_section(paragraphs, "Reminder")
+    parsed.reward_push = _parse_reward_push_section(paragraphs)
     parsed.tc = _parse_tc_section(paragraphs)
     
     return parsed
@@ -1021,6 +1038,270 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
         section.significant_terms = _bullets_to_bbcode_list(section.significant_terms)
     if section.terms_and_conditions:
         section.terms_and_conditions = _bullets_to_bbcode_list(section.terms_and_conditions)
+
+    return section
+
+
+def _parse_push_section(paragraphs: list[str], section_type: str) -> Optional[PushSection]:
+    """Parse Push Notification section (Launch or Reminder) with template variants."""
+    marker_key = f"{section_type.upper()}_PUSH"
+    markers = SECTION_MARKERS.get(marker_key, [f"{section_type.upper()} PUSH"])
+
+    start = _find_section_start(paragraphs, markers)
+    if start == -1:
+        return None
+
+    send_condition = "JoinedCampaign" if section_type == "Launch" else "NotOptedIn"
+
+    section = PushSection(section_type=section_type)
+    current_template = None
+    current_field = None
+
+    # Find end of section
+    end = len(paragraphs)
+    for i, para in enumerate(paragraphs[start + 1:], start + 1):
+        para_upper = _strip_bbcode(para).upper().strip()
+        if section_type == "Launch" and "REMINDER" in para_upper and "PUSH" in para_upper:
+            end = i
+            break
+        if "SMS" in para_upper and "PUSH" not in para_upper:
+            end = i
+            break
+        if "OMS" in para_upper and "PUSH" not in para_upper:
+            end = i
+            break
+        tc_exact_headers = [
+            "T&C", "T&CS", "TAC", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+            "TERMS & CONDITIONS",
+        ]
+        if para_upper in tc_exact_headers:
+            end = i
+            break
+
+    _TEMPLATE_RE = re.compile(
+        r"(?:PUSH(?:\s+NOTIFICATION)?)\s*[-–—]?\s*TEMPLATE\s*([A-F])",
+        re.IGNORECASE,
+    )
+    _COMBINED_RE = re.compile(
+        r"(?:LAUNCH|REMINDER)\s+PUSH(?:\s+NOTIFICATION)?\s*[-–—]\s*TEMPLATE\s*([A-F])",
+        re.IGNORECASE,
+    )
+
+    for para in paragraphs[start:end]:
+        para_stripped = para.strip()
+        para_upper = _strip_bbcode(para_stripped).upper()
+
+        # Check for combined section+variant header
+        combined_match = _COMBINED_RE.search(para_upper)
+        if combined_match:
+            variant = combined_match.group(1).upper()
+            current_template = TemplateContent(variant=variant, send_condition=send_condition)
+            section.templates.append(current_template)
+            current_field = None
+            continue
+
+        # Check for standalone template header
+        template_match = _TEMPLATE_RE.search(para_upper)
+        if template_match:
+            variant = template_match.group(1).upper()
+            current_template = TemplateContent(variant=variant, send_condition=send_condition)
+            section.templates.append(current_template)
+            current_field = None
+            continue
+
+        if not current_template:
+            continue
+
+        # Field labels
+        if _is_standalone_label(para_upper, TITLE_LABELS):
+            current_field = "title"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS)
+            current_field = "title"
+            if rest:
+                current_template.title = rest
+            continue
+
+        if _is_standalone_label(para_upper, BODY_LABELS):
+            current_field = "body"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, BODY_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, BODY_LABELS)
+            current_field = "body"
+            if rest:
+                current_template.body = rest
+            continue
+
+        if _is_standalone_label(para_upper, ACTION_KEY_LABELS):
+            current_field = "action_key"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS)
+            current_field = "action_key"
+            if rest:
+                current_template.action_key = rest
+            continue
+
+        if _is_standalone_label(para_upper, ACTION_VALUE_LABELS):
+            current_field = "action_value"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, ACTION_VALUE_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_VALUE_LABELS)
+            current_field = "action_value"
+            if rest:
+                current_template.action_value = rest
+            continue
+
+        # Content line — append to current field
+        if current_field and para_stripped:
+            current_value = getattr(current_template, current_field) or ""
+            new_value = (current_value + "\n" + para_stripped).strip() if current_value else para_stripped
+            setattr(current_template, current_field, new_value)
+
+    if not section.templates:
+        return None
+
+    return section
+
+
+def _parse_reward_push_section(paragraphs: list[str]) -> Optional[PushSection]:
+    """Parse Reward Push Notification section with template variants.
+
+    Each template variant gets its own send_condition: ClaimedReward-TemplateX.
+    Mirrors _parse_reward_oms_section but for push notification fields.
+    """
+    markers = SECTION_MARKERS.get("REWARD_PUSH", ["REWARD PUSH"])
+
+    start = _find_section_start(paragraphs, markers)
+    if start == -1:
+        return None
+
+    section = PushSection(section_type="Reward")
+    current_template = None
+    current_field = None
+
+    # Check if the header itself contains a variant letter
+    header_variant = None
+    header_text = _strip_bbcode(paragraphs[start]).upper().strip()
+    variant_match = re.search(r"TEMPLATE\s*([A-F])", header_text)
+    if variant_match:
+        header_variant = variant_match.group(1)
+
+    # Find end of section
+    tc_exact_headers = [
+        "T&C", "T&CS", "TAC", "TERMS AND CONDITIONS", "SIGNIFICANT TERMS",
+        "TERMS & CONDITIONS",
+    ]
+    end = len(paragraphs)
+    for i, para in enumerate(paragraphs[start + 1:], start + 1):
+        para_upper = _strip_bbcode(para).upper().strip()
+        if "SMS" in para_upper and "PUSH" not in para_upper:
+            end = i
+            break
+        if "OMS" in para_upper and "PUSH" not in para_upper:
+            end = i
+            break
+        if para_upper in tc_exact_headers:
+            end = i
+            break
+
+    for para in paragraphs[start:end]:
+        para_stripped = para.strip()
+        para_upper = _strip_bbcode(para_stripped).upper()
+
+        # Skip the section header
+        is_header = any(marker in para_upper for marker in markers)
+        if is_header:
+            if header_variant and not current_template:
+                current_template = TemplateContent(
+                    variant=header_variant,
+                    send_condition=f"ClaimedReward-Template{header_variant}",
+                )
+                current_field = "title"
+            continue
+
+        # Check for explicit template variant marker
+        variant_match = re.match(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
+        if variant_match:
+            if current_template:
+                section.templates.append(current_template)
+            variant = variant_match.group(1)
+            current_template = TemplateContent(
+                variant=variant,
+                send_condition=f"ClaimedReward-Template{variant}",
+            )
+            current_field = "title"
+            continue
+
+        # If we hit a field label without a template, create default (A)
+        if not current_template and (
+            _is_standalone_label(para_upper, TITLE_LABELS)
+            or _is_standalone_label(para_upper, BODY_LABELS)
+            or _is_standalone_label(para_upper, ACTION_KEY_LABELS)
+            or _is_standalone_label(para_upper, ACTION_VALUE_LABELS)
+            or any(para_upper.startswith(lbl) for lbl in TITLE_LABELS | BODY_LABELS | ACTION_KEY_LABELS | ACTION_VALUE_LABELS)
+        ):
+            current_template = TemplateContent(
+                variant="A",
+                send_condition="ClaimedReward-TemplateA",
+            )
+
+        if not current_template:
+            continue
+
+        # Field labels
+        if _is_standalone_label(para_upper, TITLE_LABELS):
+            current_field = "title"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, TITLE_LABELS)
+            current_field = "title"
+            if rest:
+                current_template.title = rest
+            continue
+
+        if _is_standalone_label(para_upper, BODY_LABELS):
+            current_field = "body"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, BODY_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, BODY_LABELS)
+            current_field = "body"
+            if rest:
+                current_template.body = rest
+            continue
+
+        if _is_standalone_label(para_upper, ACTION_KEY_LABELS):
+            current_field = "action_key"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_KEY_LABELS)
+            current_field = "action_key"
+            if rest:
+                current_template.action_key = rest
+            continue
+
+        if _is_standalone_label(para_upper, ACTION_VALUE_LABELS):
+            current_field = "action_value"
+            continue
+        elif _strip_label_prefix(para_stripped, para_upper, ACTION_VALUE_LABELS) is not None:
+            rest = _strip_label_prefix(para_stripped, para_upper, ACTION_VALUE_LABELS)
+            current_field = "action_value"
+            if rest:
+                current_template.action_value = rest
+            continue
+
+        # Content line — append to current field
+        if current_field and para_stripped:
+            current_value = getattr(current_template, current_field) or ""
+            new_value = (current_value + "\n" + para_stripped).strip() if current_value else para_stripped
+            setattr(current_template, current_field, new_value)
+
+    if current_template and current_template not in section.templates:
+        section.templates.append(current_template)
+
+    if not section.templates:
+        return None
 
     return section
 

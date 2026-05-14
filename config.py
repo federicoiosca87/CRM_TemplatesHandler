@@ -185,6 +185,21 @@ TEMPLATE_TYPES = {
             "ContentTypeHeadHashV2": "hH8mvecIzyjeYzLsi5Dad5YoHXrL8jw3bQ0Aqs4d9GdFJfu5rj6rTkPhPQo6y2Zo7Z3jdfKE9ocmpmTgjTPpZg",
         },
     },
+    "PUSH": {
+        "content_type_name": "CampaignWizardPushNotificationTemplate",
+        "fields": ["Title", "Body", "ActionKey", "ActionValue", "TemplateName"],
+        "comment": "Campaign Wizard push notification communication template",
+        "doc_type_id": 3787,
+        "image_link_data": 1931,
+        "ser_file": "push_ser_file.bin",
+        "hashes": {
+            "ContentTypeHash": "YssuSYCyZDpDO8EUvXqj85jf4HLDU4loGUuOEe3CLsyvT1a6LnZwT830aWooZFbjy6o4ymHPc4y14VVTd3g",
+            "ContentTypeHeadHash": "ilgkB2LPlWiGgrrgOETN4RgkVJlehYEaffqZ1shiYhtRaeS8sfJjf7K9D9mp4KCzQK7Oa6hp0EjE6ViFGZQ",
+            "ContentTypeRulesHash": "2KJNiAzOQuiZ22VZv9CVb0XnP2xFdoXeZ0RwJNN3QS51OC85RB1sOR8SAZkdmqArdkwrXzGtEpg3YR7Ph9w",
+            "ContentTypeMetasHash": "x3Zx1Kg5X7OUVEEtAeNz03txjVud7R9VxCkUaja3mTkkNEMjhkkIRdw90aNgpEJoTKjFtlUFugOMnlW6pmKg",
+            "ContentTypeHeadHashV2": "hH8mvecIzyjeYzLsi5Dad5YoHXrL8jw3bQ0Aqs4d9GdFJfu5rj6rTkPhPQo6y2Zo7Z3jdfKE9ocmpmTgjTPpZg",
+        },
+    },
 }
 
 # Word document section markers (headings that identify content sections)
@@ -267,6 +282,21 @@ SECTION_MARKERS = {
         "SMS ΕΚΚΙΝΗΣΗΣ", "SMS ΥΠΕΝΘΥΜΙΣΗΣ",
         # Spanish
         "SMS DE LANZAMIENTO", "SMS DE RECORDATORIO",
+    ],
+    "LAUNCH_PUSH": [
+        "LAUNCH PUSH", "PUSH LAUNCH", "LAUNCH PUSH NOTIFICATION",
+        "PUSH NOTIFICATION LAUNCH", "PUSH NOTIFICATION - LAUNCH",
+    ],
+    "REMINDER_PUSH": [
+        "REMINDER PUSH", "PUSH REMINDER", "REMINDER PUSH NOTIFICATION",
+        "PUSH NOTIFICATION REMINDER", "PUSH NOTIFICATION - REMINDER",
+    ],
+    "REWARD_PUSH": [
+        "REWARD PUSH", "PUSH REWARD", "REWARD PUSH NOTIFICATION",
+        "PUSH NOTIFICATION REWARD", "PUSH NOTIFICATION - REWARD",
+        "REWARD RECEIVED PUSH", "PUSH REWARD RECEIVED",
+        "REWARD RECEIVED - PUSH", "REWARD RECEIVED – PUSH",
+        "CLAIMED REWARD PUSH", "PUSH CLAIMED REWARD",
     ],
     "TC": [
         # English

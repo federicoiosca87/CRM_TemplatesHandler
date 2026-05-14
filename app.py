@@ -1355,6 +1355,7 @@ def html_to_bbcode(html: str) -> str:
     return text
 
 
+@st.cache_data
 def image_file_to_data_uri(image_path: Path) -> str:
     """Encode a local image file as data URI for HTML preview embedding."""
     if not image_path.exists():
@@ -2130,6 +2131,449 @@ def generate_diff_html(old_text: str, new_text: str, old_label: str = "Existing"
     {html}
     """
     return styled_html
+
+
+# ---------------------------------------------------------------------------
+#  Quill dark-theme JS (injected via components.html inside fragments)
+# ---------------------------------------------------------------------------
+_QUILL_DARK_THEME_HTML = """
+<script>
+function applyQuillDarkTheme() {
+    var parent = window.parent.document;
+    var iframes = parent.querySelectorAll('iframe[title="streamlit_quill.streamlit_quill"]');
+    iframes.forEach(function(iframe) {
+        try {
+            var doc = iframe.contentDocument || iframe.contentWindow.document;
+            if (!doc || doc.getElementById('quill-dark-css')) return;
+            var style = doc.createElement('style');
+            style.id = 'quill-dark-css';
+            style.textContent = `
+                body { background-color: transparent !important; }
+                .quill { background-color: #0e1117 !important; border-radius: 0.5rem; }
+                .ql-toolbar.ql-snow {
+                    background-color: #1a1d24 !important;
+                    border-color: #3b3f46 !important;
+                    border-radius: 0.5rem 0.5rem 0 0;
+                }
+                .ql-container.ql-snow {
+                    background-color: #0e1117 !important;
+                    border-color: #3b3f46 !important;
+                    color: #fafafa !important;
+                    border-radius: 0 0 0.5rem 0.5rem;
+                    font-size: 14px;
+                }
+                .ql-editor { color: #fafafa !important; min-height: 180px; }
+                .ql-editor.ql-blank::before { color: #6b7280 !important; }
+                .ql-snow .ql-stroke { stroke: #9ca3af !important; }
+                .ql-snow .ql-fill { fill: #9ca3af !important; }
+                .ql-snow .ql-picker-label { color: #9ca3af !important; }
+                .ql-snow .ql-picker-options {
+                    background-color: #1a1d24 !important;
+                    border-color: #3b3f46 !important;
+                }
+                .ql-snow .ql-tooltip {
+                    background-color: #1a1d24 !important;
+                    border-color: #3b3f46 !important;
+                    color: #fafafa !important;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                }
+                .ql-snow .ql-tooltip input[type=text] {
+                    background-color: #0e1117 !important;
+                    border-color: #3b3f46 !important;
+                    color: #fafafa !important;
+                }
+                .ql-snow .ql-tooltip a { color: #6db3f2 !important; }
+                .ql-editor a { color: #6db3f2 !important; }
+            `;
+            doc.head.appendChild(style);
+        } catch(e) {}
+    });
+}
+var _qdi = setInterval(applyQuillDarkTheme, 500);
+setTimeout(function() { clearInterval(_qdi); }, 15000);
+</script>
+"""
+
+
+# ---------------------------------------------------------------------------
+#  Fragment renderers — each section reruns independently on widget interaction
+# ---------------------------------------------------------------------------
+
+@st.fragment
+def render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch):
+    """Render SMS templates column as an independent fragment."""
+    st.subheader("📱 SMS Templates")
+
+    sms_link_key = f"sms_link_{selected_lang}"
+    sync_fix_buffer_to_widget(sms_link_key, "")
+    sms_link = st.text_input(
+        "🔗 SMS Link (auto-appended after age requirement)",
+        key=sms_link_key,
+        placeholder="e.g., sms.%%BrandDomain%%/xyz",
+        help="Enter once per language — will be appended after the age requirement (e.g. 18+) in all SMS bodies",
+    )
+    set_editor_value(sms_link_key, sms_link)
+
+    all_sms_templates = []
+    if selected_doc.launch_sms:
+        for t in selected_doc.launch_sms.templates:
+            all_sms_templates.append(("Launch", t))
+    if selected_doc.reminder_sms:
+        for t in selected_doc.reminder_sms.templates:
+            all_sms_templates.append(("Reminder", t))
+
+    if all_sms_templates:
+        for idx, (sms_type, template) in enumerate(all_sms_templates):
+            sms_body = template.body or ""
+            sms_key = f"sms_{selected_lang}_{idx}_{sms_type}_{template.variant}"
+            sms_fix_buffer = f"fix_buffer_{sms_key}"
+            sms_effective = get_effective_widget_value(sms_key, sms_body)
+
+            char_count, color, char_msg = get_sms_char_info(sms_effective)
+            invalid_placeholders = validate_placeholders(sms_effective)
+            missing = check_missing_content("SMS", body=sms_effective)
+
+            sms_flags: list[str] = []
+            if invalid_placeholders:
+                sms_flags.append("✖")
+            if missing:
+                sms_flags.append("⚠")
+            if color in {"orange", "red"}:
+                sms_flags.append("📏")
+            if not sms_flags:
+                sms_flags.append("✅")
+            if selected_lang_has_mismatch:
+                sms_flags.append("🌐")
+
+            expander_label = f"{' '.join(sms_flags)} {sms_type} - Template {template.variant} ({template.send_condition})"
+
+            with st.expander(expander_label):
+                fix_buffer_key = f"fix_buffer_{sms_key}"
+                sync_fix_buffer_to_widget(sms_key, sms_body)
+                edited_body = st.text_area("Body", height=100, key=sms_key)
+                set_editor_value(sms_key, edited_body)
+
+                _, color, char_msg = get_sms_char_info(edited_body)
+                if color == "green":
+                    st.success(char_msg)
+                elif color == "orange":
+                    st.warning(char_msg)
+                elif color == "red":
+                    st.error(char_msg)
+                else:
+                    st.info(char_msg)
+
+                invalid = validate_placeholders(edited_body)
+                if invalid:
+                    render_invalid_placeholder_assistant(
+                        field_label="Body",
+                        text=edited_body,
+                        fix_buffer_key=fix_buffer_key,
+                        button_key=f"fix_{sms_key}",
+                        language_code=selected_lang,
+                        tracking_field_label=f"SMS {sms_type} {template.variant} Body",
+                    )
+
+                for warn in check_missing_content("SMS", body=edited_body):
+                    st.warning(warn)
+
+                # SMS preview with filled-in placeholders
+                preview_body = _append_sms_link(edited_body, sms_link) if sms_link else edited_body
+                filled_preview = fill_placeholders_plain(preview_body)
+                if filled_preview != preview_body or sms_link:
+                    st.divider()
+                    st.caption("Preview with sample values" + (" + link" if sms_link and preview_body != edited_body else "") + ":")
+                    st.text(filled_preview)
+                    _, pcolor, pmsg = get_sms_char_info(preview_body)
+                    if pcolor == "green":
+                        st.success(pmsg)
+                    elif pcolor == "orange":
+                        st.warning(pmsg)
+                    elif pcolor == "red":
+                        st.error(pmsg)
+                    else:
+                        st.info(pmsg)
+    else:
+        st.warning("No SMS templates found")
+
+
+@st.fragment
+def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch):
+    """Render OMS templates column as an independent fragment."""
+    st.subheader("📧 OMS Templates")
+
+    # Dark theme for Quill editors in this fragment
+    components.html(_QUILL_DARK_THEME_HTML, height=0)
+
+    selected_image_file = st.session_state.get("image_file", "")
+
+    all_oms_templates = []
+    if selected_doc.launch_oms:
+        for t in selected_doc.launch_oms.templates:
+            all_oms_templates.append(("Launch", t))
+    if selected_doc.reminder_oms:
+        for t in selected_doc.reminder_oms.templates:
+            all_oms_templates.append(("Reminder", t))
+    if selected_doc.reward_oms:
+        for t in selected_doc.reward_oms.templates:
+            all_oms_templates.append(("Reward", t))
+
+    if all_oms_templates:
+        for idx, (oms_type, template) in enumerate(all_oms_templates):
+            oms_title = template.title or ""
+            oms_body = template.body or ""
+            oms_cta = template.cta or ""
+
+            title_key = f"oms_title_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+            body_key = f"oms_body_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+            cta_key = f"oms_cta_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+            title_fix_buffer = f"fix_buffer_{title_key}"
+            body_fix_buffer = f"fix_buffer_{body_key}"
+            cta_fix_buffer = f"fix_buffer_{cta_key}"
+
+            effective_title = get_effective_widget_value(title_key, oms_title)
+            effective_body = get_effective_widget_value(body_key, oms_body)
+            effective_cta = get_effective_widget_value(cta_key, oms_cta)
+
+            all_text = effective_title + " " + effective_body + " " + effective_cta
+            invalid_placeholders = validate_placeholders(all_text)
+            missing = check_missing_content("OMS", title=effective_title, body=effective_body, cta=effective_cta)
+
+            oms_flags: list[str] = []
+            if invalid_placeholders:
+                oms_flags.append("✖")
+            if missing:
+                oms_flags.append("⚠")
+            if not oms_flags:
+                oms_flags.append("✅")
+            if selected_lang_has_mismatch:
+                oms_flags.append("🌐")
+
+            expander_label = f"{' '.join(oms_flags)} {oms_type} - Template {template.variant} ({template.send_condition})"
+
+            with st.expander(expander_label):
+                sync_fix_buffer_to_widget(title_key, oms_title)
+                sync_fix_buffer_to_widget(body_key, oms_body)
+                sync_fix_buffer_to_widget(cta_key, oms_cta)
+
+                edited_title = st.text_input("Title", key=title_key)
+                set_editor_value(title_key, edited_title)
+
+                # Quill rich text editor for Body
+                _oms_toolbar = [
+                    ["bold", "italic", "underline"],
+                    [{"list": "bullet"}],
+                    ["link"],
+                    ["clean"],
+                ]
+                st.caption("Body")
+                body_html_value = bbcode_to_editor_html(get_editor_value(body_key, oms_body))
+                body_editor_out = st_quill(
+                    value=body_html_value,
+                    html=True,
+                    toolbar=_oms_toolbar,
+                    placeholder="Body…",
+                    key=f"quill_{body_key}",
+                )
+                if body_editor_out is not None:
+                    edited_body = html_to_bbcode(body_editor_out)
+                    set_editor_value(body_key, edited_body)
+                else:
+                    edited_body = get_editor_value(body_key, oms_body)
+
+                edited_cta = st.text_input("CTA", key=cta_key)
+                set_editor_value(cta_key, edited_cta)
+
+                title_invalid = validate_placeholders(edited_title)
+                if title_invalid:
+                    render_invalid_placeholder_assistant(
+                        field_label="Title",
+                        text=edited_title,
+                        fix_buffer_key=title_fix_buffer,
+                        button_key=f"fix_{title_key}",
+                        language_code=selected_lang,
+                        tracking_field_label=f"OMS {oms_type} {template.variant} Title",
+                    )
+
+                body_invalid = validate_placeholders(edited_body)
+                if body_invalid:
+                    render_invalid_placeholder_assistant(
+                        field_label="Body",
+                        text=edited_body,
+                        fix_buffer_key=body_fix_buffer,
+                        button_key=f"fix_{body_key}",
+                        language_code=selected_lang,
+                        tracking_field_label=f"OMS {oms_type} {template.variant} Body",
+                    )
+
+                cta_invalid = validate_placeholders(edited_cta)
+                if cta_invalid:
+                    render_invalid_placeholder_assistant(
+                        field_label="CTA",
+                        text=edited_cta,
+                        fix_buffer_key=cta_fix_buffer,
+                        button_key=f"fix_{cta_key}",
+                        language_code=selected_lang,
+                        tracking_field_label=f"OMS {oms_type} {template.variant} CTA",
+                    )
+
+                all_edited = edited_title + " " + edited_body + " " + edited_cta
+                placeholder_stats = analyze_placeholders(all_edited)
+
+                health_col, toggle_col = st.columns([3, 2])
+                with health_col:
+                    st.caption(
+                        f"Placeholder Health: "
+                        f"Total {placeholder_stats['total']} | "
+                        f"Valid {placeholder_stats['valid']} | "
+                        f"Invalid {placeholder_stats['invalid']}"
+                    )
+
+                raw_mode_key = f"oms_raw_mode_{selected_lang}_{idx}_{oms_type}_{template.variant}"
+                with toggle_col:
+                    show_raw_placeholders = st.toggle(
+                        "Show raw placeholders",
+                        value=False,
+                        key=raw_mode_key,
+                        help="When enabled, valid placeholders are shown as raw %%placeholder%% tokens. When disabled, valid placeholders render as realistic sample values.",
+                    )
+
+                if placeholder_stats["invalid"] > 0:
+                    with st.expander("Placeholder details", expanded=False):
+                        if placeholder_stats["invalid"] > 0:
+                            invalid_labels = [f"%%{token}%%" for token in placeholder_stats["invalid_tokens"]]
+                            st.caption("Invalid placeholders: " + ", ".join(invalid_labels))
+
+                if edited_body:
+                    st.markdown("**Desktop OMS Preview:**")
+                    if show_raw_placeholders:
+                        st.caption("Legend: Amber = available placeholder, Red = not available in Campaign Wizard")
+                    else:
+                        st.caption("Realistic mode: Green = sample value for valid placeholder, Red = invalid placeholder")
+                    image_data_uri = ""
+                    if selected_image_file:
+                        image_path = Path(__file__).parent / "images" / selected_image_file
+                        image_data_uri = image_file_to_data_uri(image_path)
+
+                    oms_card_html = render_oms_desktop_preview(
+                        title=edited_title,
+                        body=edited_body,
+                        cta=edited_cta,
+                        image_data_uri=image_data_uri,
+                        placeholder_mode="raw" if show_raw_placeholders else "realistic",
+                    )
+                    components.html(oms_card_html, height=430, scrolling=True)
+
+                invalid = validate_placeholders(all_edited)
+
+                for warn in check_missing_content("OMS", title=edited_title, body=edited_body, cta=edited_cta):
+                    st.warning(warn)
+    else:
+        st.warning("No OMS templates found")
+
+
+@st.fragment
+def render_tc_fragment(selected_doc, selected_lang):
+    """Render Terms & Conditions section as an independent fragment."""
+    st.subheader("📋 Terms & Conditions")
+
+    if not selected_doc.tc:
+        st.warning("No T&Cs found")
+        return
+
+    # Dark theme for Quill editors in this fragment
+    components.html(_QUILL_DARK_THEME_HTML, height=0)
+
+    tc_sig = selected_doc.tc.significant_terms or ""
+    tc_full = selected_doc.tc.terms_and_conditions or ""
+
+    sig_key = f"tc_sig_{selected_lang}"
+    full_key = f"tc_full_{selected_lang}"
+    sig_fix_buffer = f"fix_buffer_{sig_key}"
+    full_fix_buffer = f"fix_buffer_{full_key}"
+
+    sync_fix_buffer_to_widget(sig_key, tc_sig)
+    sync_fix_buffer_to_widget(full_key, tc_full)
+
+    edited_tc_sig = get_effective_widget_value(sig_key, tc_sig)
+    edited_tc_full = get_effective_widget_value(full_key, tc_full)
+
+    all_tc_text = edited_tc_sig + " " + edited_tc_full
+    invalid_tc = validate_placeholders(all_tc_text)
+    tc_missing = []
+    if not edited_tc_sig.strip():
+        tc_missing.append("Significant Terms empty")
+    if not edited_tc_full.strip():
+        tc_missing.append("Full T&Cs empty")
+
+    if invalid_tc or tc_missing:
+        st.warning(f"⚠️ Issues found: {', '.join(tc_missing) if tc_missing else ''} {', '.join(['Invalid: %%' + p + '%%' for p in invalid_tc]) if invalid_tc else ''}")
+
+    st.caption("💡 To add a link: select text in the editor → click the 🔗 button in the toolbar → paste the URL")
+
+    _tc_toolbar = [
+        ["bold", "italic", "underline"],
+        [{"list": "bullet"}],
+        ["link"],
+        ["clean"],
+    ]
+
+    tc_col1, tc_col2 = st.columns(2)
+    with tc_col1:
+        st.markdown("**Significant Terms**")
+        sig_html_value = bbcode_to_editor_html(get_editor_value(sig_key, tc_sig))
+        sig_editor_out = st_quill(
+            value=sig_html_value,
+            html=True,
+            toolbar=_tc_toolbar,
+            placeholder="Significant Terms…",
+            key=f"quill_{sig_key}",
+        )
+        if sig_editor_out is not None:
+            edited_sig = html_to_bbcode(sig_editor_out)
+            set_editor_value(sig_key, edited_sig)
+        else:
+            edited_sig = get_editor_value(sig_key, tc_sig)
+        sig_invalid = validate_placeholders(edited_sig)
+        if sig_invalid:
+            render_invalid_placeholder_assistant(
+                field_label="⚠️ Significant Terms",
+                text=edited_sig,
+                fix_buffer_key=sig_fix_buffer,
+                button_key=f"fix_{sig_key}",
+                language_code=selected_lang,
+                tracking_field_label="T&C Significant Terms",
+            )
+        if not edited_sig.strip():
+            st.warning("⚠️ Significant Terms is empty")
+
+    with tc_col2:
+        st.markdown("**Full Terms & Conditions**")
+        full_html_value = bbcode_to_editor_html(get_editor_value(full_key, tc_full))
+        full_editor_out = st_quill(
+            value=full_html_value,
+            html=True,
+            toolbar=_tc_toolbar,
+            placeholder="Full Terms & Conditions…",
+            key=f"quill_{full_key}",
+        )
+        if full_editor_out is not None:
+            edited_full = html_to_bbcode(full_editor_out)
+            set_editor_value(full_key, edited_full)
+        else:
+            edited_full = get_editor_value(full_key, tc_full)
+        full_invalid = validate_placeholders(edited_full)
+        if full_invalid:
+            render_invalid_placeholder_assistant(
+                field_label="⚠️ Full T&Cs",
+                text=edited_full,
+                fix_buffer_key=full_fix_buffer,
+                button_key=f"fix_{full_key}",
+                language_code=selected_lang,
+                tracking_field_label="T&C Full Terms",
+            )
+        if not edited_full.strip():
+            st.warning("⚠️ Full T&Cs is empty")
 
 
 # Page config
@@ -3646,431 +4090,13 @@ def main():
                 if "qa_last_fix_summary" in st.session_state:
                     st.caption(st.session_state["qa_last_fix_summary"])
 
-                # Dark theme for all Quill editors (OMS + T&C)
-                components.html("""
-                <script>
-                function applyQuillDarkTheme() {
-                    var parent = window.parent.document;
-                    var iframes = parent.querySelectorAll('iframe[title="streamlit_quill.streamlit_quill"]');
-                    iframes.forEach(function(iframe) {
-                        try {
-                            var doc = iframe.contentDocument || iframe.contentWindow.document;
-                            if (!doc || doc.getElementById('quill-dark-css')) return;
-                            var style = doc.createElement('style');
-                            style.id = 'quill-dark-css';
-                            style.textContent = `
-                                body { background-color: transparent !important; }
-                                .quill { background-color: #0e1117 !important; border-radius: 0.5rem; }
-                                .ql-toolbar.ql-snow {
-                                    background-color: #1a1d24 !important;
-                                    border-color: #3b3f46 !important;
-                                    border-radius: 0.5rem 0.5rem 0 0;
-                                }
-                                .ql-container.ql-snow {
-                                    background-color: #0e1117 !important;
-                                    border-color: #3b3f46 !important;
-                                    color: #fafafa !important;
-                                    border-radius: 0 0 0.5rem 0.5rem;
-                                    font-size: 14px;
-                                }
-                                .ql-editor { color: #fafafa !important; min-height: 180px; }
-                                .ql-editor.ql-blank::before { color: #6b7280 !important; }
-                                .ql-snow .ql-stroke { stroke: #9ca3af !important; }
-                                .ql-snow .ql-fill { fill: #9ca3af !important; }
-                                .ql-snow .ql-picker-label { color: #9ca3af !important; }
-                                .ql-snow .ql-picker-options {
-                                    background-color: #1a1d24 !important;
-                                    border-color: #3b3f46 !important;
-                                }
-                                .ql-snow .ql-tooltip {
-                                    background-color: #1a1d24 !important;
-                                    border-color: #3b3f46 !important;
-                                    color: #fafafa !important;
-                                    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
-                                }
-                                .ql-snow .ql-tooltip input[type=text] {
-                                    background-color: #0e1117 !important;
-                                    border-color: #3b3f46 !important;
-                                    color: #fafafa !important;
-                                }
-                                .ql-snow .ql-tooltip a { color: #6db3f2 !important; }
-                                .ql-editor a { color: #6db3f2 !important; }
-                            `;
-                            doc.head.appendChild(style);
-                        } catch(e) {}
-                    });
-                }
-                var _qdi = setInterval(applyQuillDarkTheme, 500);
-                setTimeout(function() { clearInterval(_qdi); }, 15000);
-                </script>
-                """, height=0)
-
                 col1, col2 = st.columns(2)
-                
                 with col1:
-                    st.subheader("📱 SMS Templates")
-
-                    sms_link_key = f"sms_link_{selected_lang}"
-                    sync_fix_buffer_to_widget(sms_link_key, "")
-                    sms_link = st.text_input(
-                        "🔗 SMS Link (auto-appended after age requirement)",
-                        key=sms_link_key,
-                        placeholder="e.g., sms.%%BrandDomain%%/xyz",
-                        help="Enter once per language — will be appended after the age requirement (e.g. 18+) in all SMS bodies",
-                    )
-                    set_editor_value(sms_link_key, sms_link)
-
-                    all_sms_templates = []
-                    if selected_doc.launch_sms:
-                        for t in selected_doc.launch_sms.templates:
-                            all_sms_templates.append(("Launch", t))
-                    if selected_doc.reminder_sms:
-                        for t in selected_doc.reminder_sms.templates:
-                            all_sms_templates.append(("Reminder", t))
-                    
-                    if all_sms_templates:
-                        for idx, (sms_type, template) in enumerate(all_sms_templates):
-                            sms_body = template.body or ""
-                            sms_key = f"sms_{selected_lang}_{idx}_{sms_type}_{template.variant}"
-                            sms_fix_buffer = f"fix_buffer_{sms_key}"
-                            sms_effective = get_effective_widget_value(sms_key, sms_body)
-
-                            char_count, color, char_msg = get_sms_char_info(sms_effective)
-                            invalid_placeholders = validate_placeholders(sms_effective)
-                            missing = check_missing_content("SMS", body=sms_effective)
-
-                            sms_flags: list[str] = []
-                            if invalid_placeholders:
-                                sms_flags.append("✖")  # Placeholder problems
-                            if missing:
-                                sms_flags.append("⚠")  # Missing required content
-                            if color in {"orange", "red"}:
-                                sms_flags.append("📏")  # SMS length segment risk
-                            if not sms_flags:
-                                sms_flags.append("✅")
-                            if selected_lang_has_mismatch:
-                                sms_flags.append("🌐")  # Language review required
-
-                            expander_label = f"{' '.join(sms_flags)} {sms_type} - Template {template.variant} ({template.send_condition})"
-                            
-                            with st.expander(expander_label):
-                                fix_buffer_key = f"fix_buffer_{sms_key}"
-                                sync_fix_buffer_to_widget(sms_key, sms_body)
-                                edited_body = st.text_area("Body", height=100, key=sms_key)
-                                set_editor_value(sms_key, edited_body)
-                                
-                                _, color, char_msg = get_sms_char_info(edited_body)
-                                if color == "green":
-                                    st.success(char_msg)
-                                elif color == "orange":
-                                    st.warning(char_msg)
-                                elif color == "red":
-                                    st.error(char_msg)
-                                else:
-                                    st.info(char_msg)
-                                
-                                invalid = validate_placeholders(edited_body)
-                                if invalid:
-                                    render_invalid_placeholder_assistant(
-                                        field_label="Body",
-                                        text=edited_body,
-                                        fix_buffer_key=fix_buffer_key,
-                                        button_key=f"fix_{sms_key}",
-                                        language_code=selected_lang,
-                                        tracking_field_label=f"SMS {sms_type} {template.variant} Body",
-                                    )
-                                
-                                for warn in check_missing_content("SMS", body=edited_body):
-                                    st.warning(warn)
-
-                                # SMS preview with filled-in placeholders
-                                preview_body = _append_sms_link(edited_body, sms_link) if sms_link else edited_body
-                                filled_preview = fill_placeholders_plain(preview_body)
-                                if filled_preview != preview_body or sms_link:
-                                    st.divider()
-                                    st.caption("Preview with sample values" + (" + link" if sms_link and preview_body != edited_body else "") + ":")
-                                    st.text(filled_preview)
-                                    _, pcolor, pmsg = get_sms_char_info(preview_body)
-                                    if pcolor == "green":
-                                        st.success(pmsg)
-                                    elif pcolor == "orange":
-                                        st.warning(pmsg)
-                                    elif pcolor == "red":
-                                        st.error(pmsg)
-                                    else:
-                                        st.info(pmsg)
-                    else:
-                        st.warning("No SMS templates found")
-                
+                    render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
                 with col2:
-                    st.subheader("📧 OMS Templates")
-                    
-                    # Collect all OMS templates: Launch, Reminder, Reward
-                    all_oms_templates = []
-                    if selected_doc.launch_oms:
-                        for t in selected_doc.launch_oms.templates:
-                            all_oms_templates.append(("Launch", t))
-                    if selected_doc.reminder_oms:
-                        for t in selected_doc.reminder_oms.templates:
-                            all_oms_templates.append(("Reminder", t))
-                    if selected_doc.reward_oms:
-                        for t in selected_doc.reward_oms.templates:
-                            all_oms_templates.append(("Reward", t))
-                    
-                    if all_oms_templates:
-                        for idx, (oms_type, template) in enumerate(all_oms_templates):
-                            oms_title = template.title or ""
-                            oms_body = template.body or ""
-                            oms_cta = template.cta or ""
+                    render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
 
-                            title_key = f"oms_title_{selected_lang}_{idx}_{oms_type}_{template.variant}"
-                            body_key = f"oms_body_{selected_lang}_{idx}_{oms_type}_{template.variant}"
-                            cta_key = f"oms_cta_{selected_lang}_{idx}_{oms_type}_{template.variant}"
-                            title_fix_buffer = f"fix_buffer_{title_key}"
-                            body_fix_buffer = f"fix_buffer_{body_key}"
-                            cta_fix_buffer = f"fix_buffer_{cta_key}"
-
-                            effective_title = get_effective_widget_value(title_key, oms_title)
-                            effective_body = get_effective_widget_value(body_key, oms_body)
-                            effective_cta = get_effective_widget_value(cta_key, oms_cta)
-                            
-                            all_text = effective_title + " " + effective_body + " " + effective_cta
-                            invalid_placeholders = validate_placeholders(all_text)
-                            missing = check_missing_content("OMS", title=effective_title, body=effective_body, cta=effective_cta)
-
-                            oms_flags: list[str] = []
-                            if invalid_placeholders:
-                                oms_flags.append("✖")
-                            if missing:
-                                oms_flags.append("⚠")
-                            if not oms_flags:
-                                oms_flags.append("✅")
-                            if selected_lang_has_mismatch:
-                                oms_flags.append("🌐")
-
-                            expander_label = f"{' '.join(oms_flags)} {oms_type} - Template {template.variant} ({template.send_condition})"
-                            
-                            with st.expander(expander_label):
-                                sync_fix_buffer_to_widget(title_key, oms_title)
-                                sync_fix_buffer_to_widget(body_key, oms_body)
-                                sync_fix_buffer_to_widget(cta_key, oms_cta)
-                                
-                                edited_title = st.text_input("Title", key=title_key)
-                                set_editor_value(title_key, edited_title)
-
-                                # Quill rich text editor for Body
-                                _oms_toolbar = [
-                                    ["bold", "italic", "underline"],
-                                    [{"list": "bullet"}],
-                                    ["link"],
-                                    ["clean"],
-                                ]
-                                st.caption("Body")
-                                body_html_value = bbcode_to_editor_html(get_editor_value(body_key, oms_body))
-                                body_editor_out = st_quill(
-                                    value=body_html_value,
-                                    html=True,
-                                    toolbar=_oms_toolbar,
-                                    placeholder="Body…",
-                                    key=f"quill_{body_key}",
-                                )
-                                if body_editor_out is not None:
-                                    edited_body = html_to_bbcode(body_editor_out)
-                                    set_editor_value(body_key, edited_body)
-                                else:
-                                    edited_body = get_editor_value(body_key, oms_body)
-
-                                edited_cta = st.text_input("CTA", key=cta_key)
-                                set_editor_value(cta_key, edited_cta)
-
-                                title_invalid = validate_placeholders(edited_title)
-                                if title_invalid:
-                                    render_invalid_placeholder_assistant(
-                                        field_label="Title",
-                                        text=edited_title,
-                                        fix_buffer_key=title_fix_buffer,
-                                        button_key=f"fix_{title_key}",
-                                        language_code=selected_lang,
-                                        tracking_field_label=f"OMS {oms_type} {template.variant} Title",
-                                    )
-
-                                body_invalid = validate_placeholders(edited_body)
-                                if body_invalid:
-                                    render_invalid_placeholder_assistant(
-                                        field_label="Body",
-                                        text=edited_body,
-                                        fix_buffer_key=body_fix_buffer,
-                                        button_key=f"fix_{body_key}",
-                                        language_code=selected_lang,
-                                        tracking_field_label=f"OMS {oms_type} {template.variant} Body",
-                                    )
-
-                                cta_invalid = validate_placeholders(edited_cta)
-                                if cta_invalid:
-                                    render_invalid_placeholder_assistant(
-                                        field_label="CTA",
-                                        text=edited_cta,
-                                        fix_buffer_key=cta_fix_buffer,
-                                        button_key=f"fix_{cta_key}",
-                                        language_code=selected_lang,
-                                        tracking_field_label=f"OMS {oms_type} {template.variant} CTA",
-                                    )
-
-                                all_edited = edited_title + " " + edited_body + " " + edited_cta
-                                placeholder_stats = analyze_placeholders(all_edited)
-
-                                health_col, toggle_col = st.columns([3, 2])
-                                with health_col:
-                                    st.caption(
-                                        f"Placeholder Health: "
-                                        f"Total {placeholder_stats['total']} | "
-                                        f"Valid {placeholder_stats['valid']} | "
-                                        f"Invalid {placeholder_stats['invalid']}"
-                                    )
-
-                                raw_mode_key = f"oms_raw_mode_{selected_lang}_{idx}_{oms_type}_{template.variant}"
-                                with toggle_col:
-                                    show_raw_placeholders = st.toggle(
-                                        "Show raw placeholders",
-                                        value=False,
-                                        key=raw_mode_key,
-                                        help="When enabled, valid placeholders are shown as raw %%placeholder%% tokens. When disabled, valid placeholders render as realistic sample values.",
-                                    )
-
-                                if placeholder_stats["invalid"] > 0:
-                                    with st.expander("Placeholder details", expanded=False):
-                                        if placeholder_stats["invalid"] > 0:
-                                            invalid_labels = [f"%%{token}%%" for token in placeholder_stats["invalid_tokens"]]
-                                            st.caption("Invalid placeholders: " + ", ".join(invalid_labels))
-                                
-                                if edited_body:
-                                    st.markdown("**Desktop OMS Preview:**")
-                                    if show_raw_placeholders:
-                                        st.caption("Legend: Amber = available placeholder, Red = not available in Campaign Wizard")
-                                    else:
-                                        st.caption("Realistic mode: Green = sample value for valid placeholder, Red = invalid placeholder")
-                                    image_data_uri = ""
-                                    if selected_image_file:
-                                        image_path = Path(__file__).parent / "images" / selected_image_file
-                                        image_data_uri = image_file_to_data_uri(image_path)
-
-                                    oms_card_html = render_oms_desktop_preview(
-                                        title=edited_title,
-                                        body=edited_body,
-                                        cta=edited_cta,
-                                        image_data_uri=image_data_uri,
-                                        placeholder_mode="raw" if show_raw_placeholders else "realistic",
-                                    )
-                                    components.html(oms_card_html, height=430, scrolling=True)
-
-                                invalid = validate_placeholders(all_edited)
-                                
-                                for warn in check_missing_content("OMS", title=edited_title, body=edited_body, cta=edited_cta):
-                                    st.warning(warn)
-                    else:
-                        st.warning("No OMS templates found")
-                
-                # Terms & Conditions - full width below columns
-                st.subheader("📋 Terms & Conditions")
-                if selected_doc.tc:
-                    tc_sig = selected_doc.tc.significant_terms or ""
-                    tc_full = selected_doc.tc.terms_and_conditions or ""
-                    
-                    # Pre-initialize widget keys so we can check edited values
-                    sig_key = f"tc_sig_{selected_lang}"
-                    full_key = f"tc_full_{selected_lang}"
-                    sig_fix_buffer = f"fix_buffer_{sig_key}"
-                    full_fix_buffer = f"fix_buffer_{full_key}"
-
-                    sync_fix_buffer_to_widget(sig_key, tc_sig)
-                    sync_fix_buffer_to_widget(full_key, tc_full)
-                    
-                    # Get EDITED values from session state (not original template)
-                    edited_tc_sig = get_effective_widget_value(sig_key, tc_sig)
-                    edited_tc_full = get_effective_widget_value(full_key, tc_full)
-                    
-                    # Check issues based on EDITED values
-                    all_tc_text = edited_tc_sig + " " + edited_tc_full
-                    invalid_tc = validate_placeholders(all_tc_text)
-                    tc_missing = []
-                    if not edited_tc_sig.strip():
-                        tc_missing.append("Significant Terms empty")
-                    if not edited_tc_full.strip():
-                        tc_missing.append("Full T&Cs empty")
-                    
-                    if invalid_tc or tc_missing:
-                        st.warning(f"⚠️ Issues found: {', '.join(tc_missing) if tc_missing else ''} {', '.join(['Invalid: %%' + p + '%%' for p in invalid_tc]) if invalid_tc else ''}")
-                    
-                    # Insert link helper removed — use Quill's built-in link button:
-                    # select text → click 🔗 in toolbar → paste URL
-                    st.caption("💡 To add a link: select text in the editor → click the 🔗 button in the toolbar → paste the URL")
-
-                    # Quill toolbar: only formatting we support in BBCode
-                    _tc_toolbar = [
-                        ["bold", "italic", "underline"],
-                        [{"list": "bullet"}],
-                        ["link"],
-                        ["clean"],
-                    ]
-
-                    tc_col1, tc_col2 = st.columns(2)
-                    with tc_col1:
-                        st.markdown("**Significant Terms**")
-                        sig_html_value = bbcode_to_editor_html(get_editor_value(sig_key, tc_sig))
-                        sig_editor_out = st_quill(
-                            value=sig_html_value,
-                            html=True,
-                            toolbar=_tc_toolbar,
-                            placeholder="Significant Terms…",
-                            key=f"quill_{sig_key}",
-                        )
-                        if sig_editor_out is not None:
-                            edited_sig = html_to_bbcode(sig_editor_out)
-                            set_editor_value(sig_key, edited_sig)
-                        else:
-                            edited_sig = get_editor_value(sig_key, tc_sig)
-                        sig_invalid = validate_placeholders(edited_sig)
-                        if sig_invalid:
-                            render_invalid_placeholder_assistant(
-                                field_label="⚠️ Significant Terms",
-                                text=edited_sig,
-                                fix_buffer_key=sig_fix_buffer,
-                                button_key=f"fix_{sig_key}",
-                                language_code=selected_lang,
-                                tracking_field_label="T&C Significant Terms",
-                            )
-                        if not edited_sig.strip():
-                            st.warning("⚠️ Significant Terms is empty")
-
-                    with tc_col2:
-                        st.markdown("**Full Terms & Conditions**")
-                        full_html_value = bbcode_to_editor_html(get_editor_value(full_key, tc_full))
-                        full_editor_out = st_quill(
-                            value=full_html_value,
-                            html=True,
-                            toolbar=_tc_toolbar,
-                            placeholder="Full Terms & Conditions…",
-                            key=f"quill_{full_key}",
-                        )
-                        if full_editor_out is not None:
-                            edited_full = html_to_bbcode(full_editor_out)
-                            set_editor_value(full_key, edited_full)
-                        else:
-                            edited_full = get_editor_value(full_key, tc_full)
-                        full_invalid = validate_placeholders(edited_full)
-                        if full_invalid:
-                            render_invalid_placeholder_assistant(
-                                field_label="⚠️ Full T&Cs",
-                                text=edited_full,
-                                fix_buffer_key=full_fix_buffer,
-                                button_key=f"fix_{full_key}",
-                                language_code=selected_lang,
-                                tracking_field_label="T&C Full Terms",
-                            )
-                        if not edited_full.strip():
-                            st.warning("⚠️ Full T&Cs is empty")
-                else:
-                    st.warning("No T&Cs found")
+                render_tc_fragment(selected_doc, selected_lang)
     
     with tab3:
         render_console_section_header(

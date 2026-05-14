@@ -4094,18 +4094,32 @@ def _render_review_fragment():
         if "qa_last_fix_summary" in st.session_state:
             st.caption(st.session_state["qa_last_fix_summary"])
 
-        col1, col2 = st.columns(2)
-        with col1:
-            render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
-        with col2:
-            render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+        # Channel tabs for cleaner layout
+        has_push = getattr(selected_doc, 'launch_push', None) or getattr(selected_doc, 'reminder_push', None) or getattr(selected_doc, 'reward_push', None)
 
-        # Push notifications (shown only if templates exist for any language)
-        has_push = selected_doc.launch_push or selected_doc.reminder_push or selected_doc.reward_push
+        channel_labels = ["📧 OMS", "📱 SMS"]
         if has_push:
-            render_push_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+            channel_labels.append("🔔 Push")
+        channel_labels.append("📋 T&C")
 
-        render_tc_fragment(selected_doc, selected_lang)
+        channel_tabs = st.tabs(channel_labels)
+
+        tab_idx = 0
+        with channel_tabs[tab_idx]:
+            render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+        tab_idx += 1
+
+        with channel_tabs[tab_idx]:
+            render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+        tab_idx += 1
+
+        if has_push:
+            with channel_tabs[tab_idx]:
+                render_push_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
+            tab_idx += 1
+
+        with channel_tabs[tab_idx]:
+            render_tc_fragment(selected_doc, selected_lang)
 
     save_session_to_disk()
 

@@ -8,12 +8,13 @@ import shutil
 import tempfile
 import zipfile
 import base64
+import json
 import mimetypes
 import textwrap
 import copy
 import html
 from urllib.request import urlretrieve
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from io import BytesIO
 
@@ -1994,6 +1995,79 @@ def get_effective_widget_value(widget_key: str, fallback_value: str) -> str:
     return get_editor_value(widget_key, fallback_value)
 
 
+# ---------------------------------------------------------------------------
+#  Autosave / restore – persist edits to disk so they survive browser refresh
+# ---------------------------------------------------------------------------
+
+_AUTOSAVE_DIR = Path(tempfile.gettempdir()) / "cms_template_generator_autosave"
+
+
+def _autosave_path(upload_key: str) -> Path:
+    """Return the autosave file path for a given upload key."""
+    _AUTOSAVE_DIR.mkdir(exist_ok=True)
+    safe_key = re.sub(r'[^\w\-.]', '_', upload_key)
+    return _AUTOSAVE_DIR / f"{safe_key}.json"
+
+
+def save_session_to_disk() -> None:
+    """Auto-save editor state to disk for recovery after browser refresh."""
+    upload_key = st.session_state.get("upload_file_key")
+    if not upload_key:
+        return
+    save_data = {
+        "upload_file_key": upload_key,
+        "editor_values": st.session_state.get("editor_values", {}),
+        "offer_key": st.session_state.get("offer_key", ""),
+        "task_type": st.session_state.get("task_type", ""),
+        "reward_type": st.session_state.get("reward_type", ""),
+        "bonus_product": st.session_state.get("bonus_product", ""),
+        "send_conditions": list(st.session_state.get("send_conditions", [])),
+        "variants": list(st.session_state.get("variants", [])),
+        "image_key": st.session_state.get("image_key", ""),
+        "image_id": st.session_state.get("image_id", ""),
+        "image_file": st.session_state.get("image_file", ""),
+        "image_display": st.session_state.get("image_display", ""),
+        "qa_last_selected_lang": st.session_state.get("qa_last_selected_lang", ""),
+        "saved_at": datetime.now().isoformat(),
+    }
+    try:
+        path = _autosave_path(upload_key)
+        path.write_text(json.dumps(save_data, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_session_from_disk(upload_key: str) -> dict | None:
+    """Load previously saved session if it exists and is recent (< 24 h)."""
+    try:
+        path = _autosave_path(upload_key)
+        if not path.exists():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        saved_at = datetime.fromisoformat(data.get("saved_at", ""))
+        if datetime.now() - saved_at > timedelta(hours=24):
+            path.unlink(missing_ok=True)
+            return None
+        return data
+    except (json.JSONDecodeError, OSError, ValueError):
+        return None
+
+
+def _cleanup_old_autosaves() -> None:
+    """Remove autosave files older than 24 hours."""
+    if not _AUTOSAVE_DIR.exists():
+        return
+    cutoff = datetime.now() - timedelta(hours=24)
+    for f in _AUTOSAVE_DIR.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            saved_at = datetime.fromisoformat(data.get("saved_at", ""))
+            if saved_at < cutoff:
+                f.unlink(missing_ok=True)
+        except (json.JSONDecodeError, OSError, ValueError):
+            f.unlink(missing_ok=True)
+
+
 def _append_sms_link(body: str, link: str) -> str:
     """Append an SMS link after the age requirement (e.g. 18+, 21+) at the end of the SMS body."""
     if not link or link in body:
@@ -2296,6 +2370,8 @@ def render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
     else:
         st.warning("No SMS templates found")
 
+    save_session_to_disk()
+
 
 @st.fragment
 def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch):
@@ -2471,6 +2547,8 @@ def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
     else:
         st.warning("No OMS templates found")
 
+    save_session_to_disk()
+
 
 @st.fragment
 def render_tc_fragment(selected_doc, selected_lang):
@@ -2574,6 +2652,8 @@ def render_tc_fragment(selected_doc, selected_lang):
             )
         if not edited_full.strip():
             st.warning("⚠️ Full T&Cs is empty")
+
+    save_session_to_disk()
 
 
 # Page config
@@ -3816,6 +3896,15 @@ def main():
                         if is_new_upload or "editor_values" not in st.session_state:
                             st.session_state["editor_values"] = {}
                     st.session_state["upload_file_key"] = current_upload_key
+
+                    # Attempt to restore previous edits from disk autosave
+                    saved = load_session_from_disk(current_upload_key)
+                    if saved and "editor_values" in saved and saved["editor_values"]:
+                        st.session_state["editor_values"] = saved["editor_values"]
+                        if saved.get("qa_last_selected_lang"):
+                            st.session_state["qa_language_select"] = saved["qa_last_selected_lang"]
+                        st.toast("♻️ Previous edits restored — your work is back!")
+                    _cleanup_old_autosaves()
 
                 st.session_state["offer_key"] = offer_key
                 st.session_state["task_type"] = task_type

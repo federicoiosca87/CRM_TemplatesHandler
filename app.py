@@ -1997,6 +1997,9 @@ def _managed_text_input(label: str, widget_key: str, fallback: str, **kwargs) ->
         result = st.text_input(label, key=widget_key, **kwargs)
     else:
         initial = get_editor_value(widget_key, fallback)
+        # Prefer parser fallback over stale empty value from editor store
+        if not initial and fallback:
+            initial = fallback
         result = st.text_input(label, value=initial, key=widget_key, **kwargs)
     set_editor_value(widget_key, result)
     return result
@@ -2012,6 +2015,9 @@ def _managed_text_area(label: str, widget_key: str, fallback: str, **kwargs) -> 
         result = st.text_area(label, key=widget_key, **kwargs)
     else:
         initial = get_editor_value(widget_key, fallback)
+        # Prefer parser fallback over stale empty value from editor store
+        if not initial and fallback:
+            initial = fallback
         result = st.text_area(label, value=initial, key=widget_key, **kwargs)
     set_editor_value(widget_key, result)
     return result

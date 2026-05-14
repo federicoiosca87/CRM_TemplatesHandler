@@ -4115,7 +4115,7 @@ def _restore_session_from_disk() -> bool:
     # Detect variants
     detected_variants = set()
     for doc in parsed_docs:
-        for section in (doc.launch_oms, doc.reminder_oms, doc.reward_oms, doc.launch_sms, doc.reminder_sms, doc.launch_push, doc.reminder_push, doc.reward_push):
+        for section in (doc.launch_oms, doc.reminder_oms, doc.reward_oms, doc.launch_sms, doc.reminder_sms, getattr(doc, 'launch_push', None), getattr(doc, 'reminder_push', None), getattr(doc, 'reward_push', None)):
             if section:
                 for t in section.templates:
                     detected_variants.add(t.variant)

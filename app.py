@@ -1987,6 +1987,36 @@ def sync_fix_buffer_to_widget(widget_key: str, fallback_value: str) -> None:
         st.session_state[widget_key] = get_editor_value(widget_key, fallback_value)
 
 
+def _managed_text_input(label: str, widget_key: str, fallback: str, **kwargs) -> str:
+    """text_input that reliably initializes on first render using value= parameter."""
+    fix_key = f"fix_buffer_{widget_key}"
+    if fix_key in st.session_state:
+        st.session_state[widget_key] = st.session_state.pop(fix_key)
+        set_editor_value(widget_key, st.session_state[widget_key])
+    if widget_key in st.session_state:
+        result = st.text_input(label, key=widget_key, **kwargs)
+    else:
+        initial = get_editor_value(widget_key, fallback)
+        result = st.text_input(label, value=initial, key=widget_key, **kwargs)
+    set_editor_value(widget_key, result)
+    return result
+
+
+def _managed_text_area(label: str, widget_key: str, fallback: str, **kwargs) -> str:
+    """text_area that reliably initializes on first render using value= parameter."""
+    fix_key = f"fix_buffer_{widget_key}"
+    if fix_key in st.session_state:
+        st.session_state[widget_key] = st.session_state.pop(fix_key)
+        set_editor_value(widget_key, st.session_state[widget_key])
+    if widget_key in st.session_state:
+        result = st.text_area(label, key=widget_key, **kwargs)
+    else:
+        initial = get_editor_value(widget_key, fallback)
+        result = st.text_area(label, value=initial, key=widget_key, **kwargs)
+    set_editor_value(widget_key, result)
+    return result
+
+
 def get_effective_widget_value(widget_key: str, fallback_value: str) -> str:
     """Return current value for a field, preferring fix buffer over widget state."""
     fix_key = f"fix_buffer_{widget_key}"
@@ -2326,14 +2356,12 @@ def render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
     st.subheader("📱 SMS Templates")
 
     sms_link_key = f"sms_link_{selected_lang}"
-    sync_fix_buffer_to_widget(sms_link_key, "")
-    sms_link = st.text_input(
+    sms_link = _managed_text_input(
         "🔗 SMS Link (auto-appended after age requirement)",
-        key=sms_link_key,
+        sms_link_key, "",
         placeholder="e.g., sms.%%BrandDomain%%/xyz",
         help="Enter once per language — will be appended after the age requirement (e.g. 18+) in all SMS bodies",
     )
-    set_editor_value(sms_link_key, sms_link)
 
     all_sms_templates = []
     if selected_doc.launch_sms:
@@ -2370,9 +2398,7 @@ def render_sms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
 
             with st.expander(expander_label):
                 fix_buffer_key = f"fix_buffer_{sms_key}"
-                sync_fix_buffer_to_widget(sms_key, sms_body)
-                edited_body = st.text_area("Body", height=100, key=sms_key)
-                set_editor_value(sms_key, edited_body)
+                edited_body = _managed_text_area("Body", sms_key, sms_body, height=100)
 
                 _, color, char_msg = get_sms_char_info(edited_body)
                 if color == "green":
@@ -2471,12 +2497,7 @@ def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
             expander_label = f"{' '.join(oms_flags)} {oms_type} - Template {template.variant} ({template.send_condition})"
 
             with st.expander(expander_label):
-                sync_fix_buffer_to_widget(title_key, oms_title)
-                sync_fix_buffer_to_widget(body_key, oms_body)
-                sync_fix_buffer_to_widget(cta_key, oms_cta)
-
-                edited_title = st.text_input("Title", key=title_key)
-                set_editor_value(title_key, edited_title)
+                edited_title = _managed_text_input("Title", title_key, oms_title)
 
                 # Quill rich text editor for Body
                 _oms_toolbar = [
@@ -2486,6 +2507,10 @@ def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
                     ["clean"],
                 ]
                 st.caption("Body")
+                # Apply pending fix buffer for body
+                body_fix_key = f"fix_buffer_{body_key}"
+                if body_fix_key in st.session_state:
+                    set_editor_value(body_key, st.session_state.pop(body_fix_key))
                 body_html_value = bbcode_to_editor_html(get_editor_value(body_key, oms_body))
                 body_editor_out = st_quill(
                     value=body_html_value,
@@ -2500,8 +2525,7 @@ def render_oms_fragment(selected_doc, selected_lang, selected_lang_has_mismatch)
                 else:
                     edited_body = get_editor_value(body_key, oms_body)
 
-                edited_cta = st.text_input("CTA", key=cta_key)
-                set_editor_value(cta_key, edited_cta)
+                edited_cta = _managed_text_input("CTA", cta_key, oms_cta)
 
                 title_invalid = validate_placeholders(edited_title)
                 if title_invalid:
@@ -2609,8 +2633,11 @@ def render_tc_fragment(selected_doc, selected_lang):
     sig_fix_buffer = f"fix_buffer_{sig_key}"
     full_fix_buffer = f"fix_buffer_{full_key}"
 
-    sync_fix_buffer_to_widget(sig_key, tc_sig)
-    sync_fix_buffer_to_widget(full_key, tc_full)
+    # Apply pending fix buffers for T&C Quill editors
+    if sig_fix_buffer in st.session_state:
+        set_editor_value(sig_key, st.session_state.pop(sig_fix_buffer))
+    if full_fix_buffer in st.session_state:
+        set_editor_value(full_key, st.session_state.pop(full_fix_buffer))
 
     edited_tc_sig = get_effective_widget_value(sig_key, tc_sig)
     edited_tc_full = get_effective_widget_value(full_key, tc_full)

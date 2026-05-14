@@ -4780,6 +4780,30 @@ def main():
         - Identify what was added, removed, or modified
         
         This is useful when updating existing templates.
+        
+        ---
+        
+        ## Autosave & Session Recovery
+        
+        Your edits are **automatically saved to disk** as you work. If the browser refreshes
+        or you accidentally close the tab:
+        
+        1. Re-upload **the same ZIP file**
+        2. Your previous edits (SMS, OMS, T&C changes, language position) are restored automatically
+        3. A toast notification confirms recovery: *"♻️ Previous edits restored"*
+        
+        **Notes:**
+        - Autosave matches by filename + file size — uploading a different ZIP starts fresh
+        - Saved sessions expire after **24 hours**
+        - On Streamlit Cloud, autosaves survive browser refresh but not app redeployment
+        
+        ---
+        
+        ## Performance
+        
+        The SMS, OMS, and T&C sections render independently. Editing one section
+        (e.g. changing an SMS body) does **not** reload the others. This keeps the
+        interface responsive when working with large template sets.
         """)
 
 

@@ -1612,9 +1612,24 @@ def detect_offer_type(parsed_docs: list) -> dict:
         if doc.reminder_oms:
             for t in doc.reminder_oms.templates:
                 all_text += f" {t.title or ''} {t.body or ''}"
+        if doc.reward_oms:
+            for t in doc.reward_oms.templates:
+                all_text += f" {t.title or ''} {t.body or ''}"
         if doc.launch_sms:
             for t in doc.launch_sms.templates:
                 all_text += f" {t.body or ''}"
+        if doc.reminder_sms:
+            for t in doc.reminder_sms.templates:
+                all_text += f" {t.body or ''}"
+        if getattr(doc, 'launch_push', None):
+            for t in doc.launch_push.templates:
+                all_text += f" {t.title or ''} {t.body or ''}"
+        if getattr(doc, 'reminder_push', None):
+            for t in doc.reminder_push.templates:
+                all_text += f" {t.title or ''} {t.body or ''}"
+        if getattr(doc, 'reward_push', None):
+            for t in doc.reward_push.templates:
+                all_text += f" {t.title or ''} {t.body or ''}"
         if doc.my_offers:
             all_text += f" {doc.my_offers.task or ''} {doc.my_offers.reward or ''}"
     
@@ -4053,7 +4068,7 @@ def _render_review_fragment():
                     key=f"fix_all_safe_{selected_lang}",
                     width="stretch",
                     type="secondary",
-                    help="Apply high-confidence placeholder fixes across SMS/OMS/T&C in this language.",
+                    help="Apply high-confidence placeholder fixes across SMS/OMS/Push/T&C in this language.",
                 ):
                     changes = apply_safe_fixes_for_language(selected_lang, selected_doc)
                     if changes:
@@ -5238,7 +5253,7 @@ def main():
         or you accidentally close the tab:
         
         1. Simply **reopen the app** — your previous session is restored automatically
-        2. The ZIP file, all edits (SMS, OMS, T&C), sidebar config, and language position are recovered
+        2. The ZIP file, all edits (SMS, OMS, Push, T&C), sidebar config, and language position are recovered
         3. A toast notification confirms recovery: *"♻️ Previous session restored"*
         4. No need to re-upload the file — just head to the **Review** tab and continue
         
@@ -5251,7 +5266,7 @@ def main():
         
         ## Performance
         
-        The SMS, OMS, and T&C sections render independently. Editing one section
+        The SMS, OMS, Push, and T&C sections render independently. Editing one section
         (e.g. changing an SMS body) does **not** reload the others. This keeps the
         interface responsive when working with large template sets.
         """)

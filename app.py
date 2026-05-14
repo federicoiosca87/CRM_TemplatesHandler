@@ -1876,6 +1876,12 @@ def generate_missing_content_report(parsed_docs: list) -> dict:
         "summary": [],
     }
     
+    # Determine if push is expected (any language has push sections)
+    any_has_push = any(
+        getattr(d, 'launch_push', None) or getattr(d, 'reminder_push', None) or getattr(d, 'reward_push', None)
+        for d in parsed_docs
+    )
+
     for doc in parsed_docs:
         lang = doc.language_code
         issues = []
@@ -1927,25 +1933,30 @@ def generate_missing_content_report(parsed_docs: list) -> dict:
             if not doc.tc.terms_and_conditions or not doc.tc.terms_and_conditions.strip():
                 issues.append("⚠️ T&C: Missing full terms")
 
-        # Check Push Notification templates (optional — only flag if section exists)
-        if doc.launch_push:
-            for t in doc.launch_push.templates:
-                if not t.title or not t.title.strip():
-                    issues.append(f"⚠️ Launch Push {t.variant}: Missing title")
-                if not t.body or not t.body.strip():
-                    issues.append(f"⚠️ Launch Push {t.variant}: Missing body")
-        if doc.reminder_push:
-            for t in doc.reminder_push.templates:
-                if not t.title or not t.title.strip():
-                    issues.append(f"⚠️ Reminder Push {t.variant}: Missing title")
-                if not t.body or not t.body.strip():
-                    issues.append(f"⚠️ Reminder Push {t.variant}: Missing body")
-        if doc.reward_push:
-            for t in doc.reward_push.templates:
-                if not t.title or not t.title.strip():
-                    issues.append(f"⚠️ Reward Push {t.variant}: Missing title")
-                if not t.body or not t.body.strip():
-                    issues.append(f"⚠️ Reward Push {t.variant}: Missing body")
+        # Check Push Notification templates
+        # If any language has push, flag missing push in languages that don't
+        if any_has_push:
+            if not getattr(doc, 'launch_push', None) and not getattr(doc, 'reminder_push', None) and not getattr(doc, 'reward_push', None):
+                issues.append("❌ No Push Notification templates (other languages have them)")
+            else:
+                if getattr(doc, 'launch_push', None):
+                    for t in doc.launch_push.templates:
+                        if not t.title or not t.title.strip():
+                            issues.append(f"⚠️ Launch Push {t.variant}: Missing title")
+                        if not t.body or not t.body.strip():
+                            issues.append(f"⚠️ Launch Push {t.variant}: Missing body")
+                if getattr(doc, 'reminder_push', None):
+                    for t in doc.reminder_push.templates:
+                        if not t.title or not t.title.strip():
+                            issues.append(f"⚠️ Reminder Push {t.variant}: Missing title")
+                        if not t.body or not t.body.strip():
+                            issues.append(f"⚠️ Reminder Push {t.variant}: Missing body")
+                if getattr(doc, 'reward_push', None):
+                    for t in doc.reward_push.templates:
+                        if not t.title or not t.title.strip():
+                            issues.append(f"⚠️ Reward Push {t.variant}: Missing title")
+                        if not t.body or not t.body.strip():
+                            issues.append(f"⚠️ Reward Push {t.variant}: Missing body")
         
         report["by_language"][lang] = issues
         report["total_issues"] += len(issues)
@@ -4583,11 +4594,15 @@ def main():
                     cms_markets = LANGUAGE_MAPPING.get(doc.language_code, [doc.language_code.lower()])
                     sms_count = (len(doc.launch_sms.templates) if doc.launch_sms else 0) + \
                                (len(doc.reminder_sms.templates) if doc.reminder_sms else 0)
+                    push_count = (len(getattr(doc, 'launch_push', None).templates) if getattr(doc, 'launch_push', None) else 0) + \
+                                 (len(getattr(doc, 'reminder_push', None).templates) if getattr(doc, 'reminder_push', None) else 0) + \
+                                 (len(getattr(doc, 'reward_push', None).templates) if getattr(doc, 'reward_push', None) else 0)
                     summary_data.append({
                         "Language": f"{doc.language_code} ({lang_name})",
                         "CMS Markets": ", ".join(cms_markets),
                         "OMS Templates": len(doc.launch_oms.templates) if doc.launch_oms else 0,
                         "SMS Templates": sms_count,
+                        "Push Templates": push_count,
                         "Has T&Cs": "✅" if doc.tc else "❌",
                     })
 

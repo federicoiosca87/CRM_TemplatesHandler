@@ -1191,6 +1191,17 @@ def get_placeholder_sample_value(placeholder_name: str) -> str:
     return "Sample value"
 
 
+def fill_placeholders_plain(text: str) -> str:
+    """Replace %%placeholder%% tokens with sample values in plain text."""
+    if not text:
+        return ""
+    return re.sub(
+        r'%%([A-Za-z0-9_]+)%%',
+        lambda m: get_placeholder_sample_value(m.group(1)) if m.group(1) in VALID_PLACEHOLDERS else m.group(0),
+        text,
+    )
+
+
 def render_placeholders_campaign_style(html_text: str, mode: str = "realistic") -> str:
     """Render placeholders in preview.
 
@@ -2007,7 +2018,7 @@ def build_effective_parsed_docs(parsed_docs: list[ParsedDocument]) -> list[Parse
         lang = doc.language_code
 
         # SMS link to auto-append after "T&Cs apply."
-        sms_link = st.session_state.get(f"sms_link_{lang}", "").strip()
+        sms_link = get_effective_widget_value(f"sms_link_{lang}", "").strip()
 
         sms_idx = 0
         if doc.launch_sms:
@@ -3700,12 +3711,14 @@ def main():
                     st.subheader("📱 SMS Templates")
 
                     sms_link_key = f"sms_link_{selected_lang}"
+                    sync_fix_buffer_to_widget(sms_link_key, "")
                     sms_link = st.text_input(
                         "🔗 SMS Link (auto-appended after age requirement)",
                         key=sms_link_key,
                         placeholder="e.g., sms.%%BrandDomain%%/xyz",
                         help="Enter once per language — will be appended after the age requirement (e.g. 18+) in all SMS bodies",
                     )
+                    set_editor_value(sms_link_key, sms_link)
 
                     all_sms_templates = []
                     if selected_doc.launch_sms:
@@ -3770,22 +3783,22 @@ def main():
                                 for warn in check_missing_content("SMS", body=edited_body):
                                     st.warning(warn)
 
-                                # Show preview with SMS link appended (if set)
-                                if sms_link:
-                                    preview_body = _append_sms_link(edited_body, sms_link)
-                                    if preview_body != edited_body:
-                                        st.divider()
-                                        st.caption("Preview with link:")
-                                        st.text(preview_body)
-                                        _, pcolor, pmsg = get_sms_char_info(preview_body)
-                                        if pcolor == "green":
-                                            st.success(pmsg)
-                                        elif pcolor == "orange":
-                                            st.warning(pmsg)
-                                        elif pcolor == "red":
-                                            st.error(pmsg)
-                                        else:
-                                            st.info(pmsg)
+                                # SMS preview with filled-in placeholders
+                                preview_body = _append_sms_link(edited_body, sms_link) if sms_link else edited_body
+                                filled_preview = fill_placeholders_plain(preview_body)
+                                if filled_preview != preview_body or sms_link:
+                                    st.divider()
+                                    st.caption("Preview with sample values" + (" + link" if sms_link and preview_body != edited_body else "") + ":")
+                                    st.text(filled_preview)
+                                    _, pcolor, pmsg = get_sms_char_info(preview_body)
+                                    if pcolor == "green":
+                                        st.success(pmsg)
+                                    elif pcolor == "orange":
+                                        st.warning(pmsg)
+                                    elif pcolor == "red":
+                                        st.error(pmsg)
+                                    else:
+                                        st.info(pmsg)
                     else:
                         st.warning("No SMS templates found")
                 
@@ -3861,8 +3874,11 @@ def main():
                                     placeholder="Body…",
                                     key=f"quill_{body_key}",
                                 )
-                                edited_body = html_to_bbcode(body_editor_out) if body_editor_out else ""
-                                set_editor_value(body_key, edited_body)
+                                if body_editor_out is not None:
+                                    edited_body = html_to_bbcode(body_editor_out)
+                                    set_editor_value(body_key, edited_body)
+                                else:
+                                    edited_body = get_editor_value(body_key, oms_body)
 
                                 edited_cta = st.text_input("CTA", key=cta_key)
                                 set_editor_value(cta_key, edited_cta)
@@ -4008,8 +4024,11 @@ def main():
                             placeholder="Significant Terms…",
                             key=f"quill_{sig_key}",
                         )
-                        edited_sig = html_to_bbcode(sig_editor_out) if sig_editor_out else ""
-                        set_editor_value(sig_key, edited_sig)
+                        if sig_editor_out is not None:
+                            edited_sig = html_to_bbcode(sig_editor_out)
+                            set_editor_value(sig_key, edited_sig)
+                        else:
+                            edited_sig = get_editor_value(sig_key, tc_sig)
                         sig_invalid = validate_placeholders(edited_sig)
                         if sig_invalid:
                             render_invalid_placeholder_assistant(
@@ -4033,8 +4052,11 @@ def main():
                             placeholder="Full Terms & Conditions…",
                             key=f"quill_{full_key}",
                         )
-                        edited_full = html_to_bbcode(full_editor_out) if full_editor_out else ""
-                        set_editor_value(full_key, edited_full)
+                        if full_editor_out is not None:
+                            edited_full = html_to_bbcode(full_editor_out)
+                            set_editor_value(full_key, edited_full)
+                        else:
+                            edited_full = get_editor_value(full_key, tc_full)
                         full_invalid = validate_placeholders(edited_full)
                         if full_invalid:
                             render_invalid_placeholder_assistant(

@@ -9,6 +9,8 @@ LANGUAGE_MAPPING = {
     "EN_PE": ["en-pe"],
     "EN_GR": ["en-gr"],
     "EN_EE": ["en-ee"],
+    "EN_ET": ["en-ee"],     # EN_ET prefix also maps to English (Estonia)
+    "EN_CA": ["en-ca"],     # English (Canada)
     "EN_TR": ["en-tr"],
     "ARG": ["es-ar-ba", "es-ar-ca", "es-ar-co"],  # All Argentina regions
     "BR": ["br"],
@@ -47,6 +49,8 @@ LANGUAGE_NAMES = {
     "EN_PE": "English (Peru)",
     "EN_GR": "English (Greece)",
     "EN_EE": "English (Estonia)",
+    "EN_ET": "English (Estonia)",
+    "EN_CA": "English (Canada)",
     "EN_TR": "English (Turkey)",
     "ARG": "Spanish (Argentina)",
     "BR": "Portuguese (Brazil)",
@@ -100,6 +104,8 @@ LANGUAGE_TO_MARKET = {
     "EN_PE": "Peru",
     "EN_GR": "Greece",
     "EN_EE": "Estonia",
+    "EN_ET": "Estonia",
+    "EN_CA": "Canada",
     "EN_TR": "Turkey",
     "ARG": "Argentina",
     "BR": "Brazil",

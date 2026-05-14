@@ -3011,6 +3011,9 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
+    /* Hide the entire Streamlit toolbar / header decoration */
+    header[data-testid="stHeader"] { display: none !important; }
+
     /* Betsson Sans: Local woff2 files for maximum performance */
     @font-face {
         font-family: "Betsson Sans";

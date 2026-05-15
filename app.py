@@ -36,7 +36,6 @@ from config import (
 from word_parser import parse_documents_from_folder, ParsedDocument
 from xml_generator import generate_cms_packages
 from report_generator import build_report_from_session
-from auth import require_auth
 import re
 import difflib
 import xml.etree.ElementTree as ET
@@ -3008,8 +3007,6 @@ st.set_page_config(
     page_icon=str(brand_favicon_black_path),
     layout="wide",
 )
-
-require_auth()
 
 # Custom CSS
 st.markdown("""

@@ -4143,16 +4143,10 @@ def _restore_session_from_disk() -> bool:
     """Attempt to restore a full session from disk autosave (ZIP + editor state).
 
     Called at the start of main() before the sidebar renders.
-    Shows a confirmation prompt before restoring so users don't silently
-    receive another user's session in multi-user deployments.
     Returns True if a session was restored, False otherwise.
     """
     if "parsed_docs" in st.session_state:
         return False  # already loaded — nothing to do
-
-    # User already declined restore this session
-    if st.session_state.get("_autosave_declined"):
-        return False
 
     saved = find_latest_autosave()
     if not saved:
@@ -4161,24 +4155,6 @@ def _restore_session_from_disk() -> bool:
     upload_key = saved.get("upload_file_key", "")
     zip_path = _autosave_zip_path(upload_key)
     if not zip_path.exists():
-        return False
-
-    doc_name = saved.get("document_name", "Unknown")
-    saved_at = saved.get("saved_at", "")
-
-    # Show confirmation before restoring
-    if not st.session_state.get("_autosave_confirmed"):
-        st.info(f"📂 Found a previous session: **{doc_name}** (saved {saved_at[:16]})")
-        col_yes, col_no, _ = st.columns([1, 1, 4])
-        with col_yes:
-            if st.button("✅ Restore", key="restore_autosave_yes"):
-                st.session_state["_autosave_confirmed"] = True
-                st.rerun()
-        with col_no:
-            if st.button("❌ Start fresh", key="restore_autosave_no"):
-                st.session_state["_autosave_declined"] = True
-                st.rerun()
-        st.stop()
         return False
 
     # Re-parse from saved ZIP bytes

@@ -144,10 +144,32 @@ def _is_standalone_label(text_upper: str, labels: set[str]) -> bool:
 
 
 def _strip_label_prefix(text: str, text_upper: str, labels: set[str]) -> Optional[str]:
-    """If text starts with 'Label: content' or 'Label content', return the content after the label."""
+    """If text starts with 'Label: content' or 'Label content', return the content after the label.
+
+    Handles BBCode-wrapped labels (e.g. '[b]Title[/b]: content') by stripping
+    BBCode before matching, then extracting the remainder from the original text
+    using a regex that consumes optional BBCode tags around the label.
+    """
     for label in labels:
         if text_upper.startswith(label + ":") or text_upper.startswith(label + " "):
-            rest = text[len(label):].lstrip(": ").strip()
+            # text_upper is BBCode-stripped, so we can't slice text by len(label)
+            # directly when BBCode tags wrap the label. Use regex on original text.
+            pattern = re.compile(
+                r"^(?:\[/?[biu]\])*" + re.escape(label) + r"(?:\[/?[biu]\])*[\s:]+",
+                re.IGNORECASE,
+            )
+            m = pattern.match(_strip_bbcode(text).upper())
+            if m:
+                # Find the corresponding position in the original text
+                # by matching the same pattern against the BBCode-stripped version
+                stripped = _strip_bbcode(text)
+                m2 = pattern.match(stripped)
+                if m2:
+                    rest = stripped[m2.end():].strip()
+                    return rest if rest else None
+            # Fallback: slice from BBCode-stripped text
+            stripped = _strip_bbcode(text)
+            rest = stripped[len(label):].lstrip(": ").strip()
             return rest if rest else None
     return None
 

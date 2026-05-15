@@ -773,18 +773,24 @@ def collect_content_edit_log(original_docs: list[ParsedDocument], current_docs: 
                 old_t = original.launch_push.templates[idx] if idx < len(original.launch_push.templates) else None
                 append_if_changed(logs, lang, f"Push Launch {tmpl.variant} Title", old_t.title if old_t else "", tmpl.title)
                 append_if_changed(logs, lang, f"Push Launch {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
+                append_if_changed(logs, lang, f"Push Launch {tmpl.variant} Action Key", old_t.action_key if old_t else "", tmpl.action_key)
+                append_if_changed(logs, lang, f"Push Launch {tmpl.variant} Action Value", old_t.action_value if old_t else "", tmpl.action_value)
 
         if original.reminder_push and current.reminder_push:
             for idx, tmpl in enumerate(current.reminder_push.templates):
                 old_t = original.reminder_push.templates[idx] if idx < len(original.reminder_push.templates) else None
                 append_if_changed(logs, lang, f"Push Reminder {tmpl.variant} Title", old_t.title if old_t else "", tmpl.title)
                 append_if_changed(logs, lang, f"Push Reminder {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
+                append_if_changed(logs, lang, f"Push Reminder {tmpl.variant} Action Key", old_t.action_key if old_t else "", tmpl.action_key)
+                append_if_changed(logs, lang, f"Push Reminder {tmpl.variant} Action Value", old_t.action_value if old_t else "", tmpl.action_value)
 
         if original.reward_push and current.reward_push:
             for idx, tmpl in enumerate(current.reward_push.templates):
                 old_t = original.reward_push.templates[idx] if idx < len(original.reward_push.templates) else None
                 append_if_changed(logs, lang, f"Push Claimed Reward {tmpl.variant} Title", old_t.title if old_t else "", tmpl.title)
                 append_if_changed(logs, lang, f"Push Claimed Reward {tmpl.variant} Body", old_t.body if old_t else "", tmpl.body)
+                append_if_changed(logs, lang, f"Push Claimed Reward {tmpl.variant} Action Key", old_t.action_key if old_t else "", tmpl.action_key)
+                append_if_changed(logs, lang, f"Push Claimed Reward {tmpl.variant} Action Value", old_t.action_value if old_t else "", tmpl.action_value)
 
         if original.tc and current.tc:
             append_if_changed(logs, lang, "T&C Significant Terms", original.tc.significant_terms, current.tc.significant_terms)
@@ -2269,24 +2275,16 @@ def load_session_from_disk(upload_key: str) -> dict | None:
 
 
 def find_latest_autosave() -> dict | None:
-    """Scan autosave directory for the most recent valid session (< 24 h) that has a companion ZIP."""
-    if not _AUTOSAVE_DIR.exists():
+    """Return only the current session's autosave, if an explicit upload key is present.
+
+    In multi-user deployments (Streamlit Cloud, shared server), scanning all
+    autosave files could restore another user's session.  Instead, we only
+    restore when the current session already knows its own upload_file_key.
+    """
+    upload_key = st.session_state.get("upload_file_key")
+    if not upload_key:
         return None
-    best = None
-    for f in _AUTOSAVE_DIR.glob("*.json"):
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            saved_at = datetime.fromisoformat(data.get("saved_at", ""))
-            if datetime.now() - saved_at > timedelta(hours=24):
-                continue
-            zip_path = f.with_suffix(".zip")
-            if not zip_path.exists():
-                continue
-            if best is None or saved_at > datetime.fromisoformat(best.get("saved_at", "")):
-                best = data
-        except (json.JSONDecodeError, OSError, ValueError):
-            continue
-    return best
+    return load_session_from_disk(upload_key)
 
 
 def _cleanup_old_autosaves() -> None:

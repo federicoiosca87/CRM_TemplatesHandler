@@ -4624,15 +4624,19 @@ def main():
                 for doc in parsed_docs:
                     lang_name = LANGUAGE_NAMES.get(doc.language_code, doc.language_code)
                     cms_markets = LANGUAGE_MAPPING.get(doc.language_code, [doc.language_code.lower()])
+                    oms_count = (len(doc.launch_oms.templates) if doc.launch_oms else 0) + \
+                               (len(doc.reminder_oms.templates) if doc.reminder_oms else 0) + \
+                               (len(getattr(doc, 'reward_oms', None).templates) if getattr(doc, 'reward_oms', None) else 0)
                     sms_count = (len(doc.launch_sms.templates) if doc.launch_sms else 0) + \
-                               (len(doc.reminder_sms.templates) if doc.reminder_sms else 0)
+                               (len(doc.reminder_sms.templates) if doc.reminder_sms else 0) + \
+                               (len(getattr(doc, 'reward_sms', None).templates) if getattr(doc, 'reward_sms', None) else 0)
                     push_count = (len(getattr(doc, 'launch_push', None).templates) if getattr(doc, 'launch_push', None) else 0) + \
                                  (len(getattr(doc, 'reminder_push', None).templates) if getattr(doc, 'reminder_push', None) else 0) + \
                                  (len(getattr(doc, 'reward_push', None).templates) if getattr(doc, 'reward_push', None) else 0)
                     summary_data.append({
                         "Language": f"{doc.language_code} ({lang_name})",
                         "CMS Markets": ", ".join(cms_markets),
-                        "OMS Templates": len(doc.launch_oms.templates) if doc.launch_oms else 0,
+                        "OMS Templates": oms_count,
                         "SMS Templates": sms_count,
                         "Push Templates": push_count,
                         "Has T&Cs": "✅" if doc.tc else "❌",

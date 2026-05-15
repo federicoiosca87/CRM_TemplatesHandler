@@ -862,9 +862,13 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
         # Check for combined section+variant header (table-based docs)
         # e.g. "LAUNCH SMS - TemplateA", "REMINDER SMS - TemplateB"
         # Also handles Estonian: "Näidis" (Template), "Meeldetuletus" (Reminder), "Lansseerimine" (Launch)
+        # NOTE: We also accept "OMS" here because some Word docs have typos
+        # (e.g. "REMINDER OMS - TemplateB" inside the SMS section).
+        # Since we're already inside the SMS section bounds, any template variant
+        # header with LAUNCH/REMINDER is a valid SMS template.
         combined_sms_match = re.search(r"(?:TEMPLATE|MALL|PÕHI|NÄIDIS)\s*([A-F])", para_upper)
-        has_sms = "SMS" in para_upper or "СМС" in para_upper
-        if combined_sms_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper) and has_sms:
+        has_channel = "SMS" in para_upper or "СМС" in para_upper or "OMS" in para_upper
+        if combined_sms_match and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper) and has_channel:
             if current_template:
                 section.templates.append(current_template)
             # Extract any inline body after the header line (table-based docs
@@ -889,8 +893,9 @@ def _parse_sms_section(paragraphs: list[str], section_type: str) -> Optional[Sms
             continue
 
         # Skip SMS section headers (e.g., "SMS TEMPLATES", "LAUNCH SMS", "REMINDER SMS", "SMS - LAUNCH")
-        # Also handles Cyrillic "СМС" (Russian) and Estonian equivalents
-        if has_sms and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper or para_upper in ("SMS", "СМС") or "TEMPLATES" in para_upper):
+        # Also handles Cyrillic "СМС" (Russian), Estonian equivalents,
+        # and OMS headers that may appear as typos inside the SMS section
+        if has_channel and ("LAUNCH" in para_upper or "REMINDER" in para_upper or "MEELDETULETUS" in para_upper or "LANSSEERIMINE" in para_upper or para_upper in ("SMS", "СМС") or "TEMPLATES" in para_upper):
             continue
 
         # Skip standalone sub-headers (table-based docs: "LAUNCH" or "REMINDER" on their own line)

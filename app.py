@@ -2275,16 +2275,30 @@ def load_session_from_disk(upload_key: str) -> dict | None:
 
 
 def find_latest_autosave() -> dict | None:
-    """Return only the current session's autosave, if an explicit upload key is present.
+    """Find the most recent valid autosave (< 24 h) with a companion ZIP.
 
-    In multi-user deployments (Streamlit Cloud, shared server), scanning all
-    autosave files could restore another user's session.  Instead, we only
-    restore when the current session already knows its own upload_file_key.
+    Returns the autosave data dict (including 'upload_file_key' and
+    'document_name') so the caller can show a confirmation prompt before
+    restoring.  This avoids silently loading another user's session in
+    multi-user deployments.
     """
-    upload_key = st.session_state.get("upload_file_key")
-    if not upload_key:
+    if not _AUTOSAVE_DIR.exists():
         return None
-    return load_session_from_disk(upload_key)
+    best = None
+    for f in _AUTOSAVE_DIR.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            saved_at = datetime.fromisoformat(data.get("saved_at", ""))
+            if datetime.now() - saved_at > timedelta(hours=24):
+                continue
+            zip_path = f.with_suffix(".zip")
+            if not zip_path.exists():
+                continue
+            if best is None or saved_at > datetime.fromisoformat(best.get("saved_at", "")):
+                best = data
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+    return best
 
 
 def _cleanup_old_autosaves() -> None:
@@ -4129,10 +4143,16 @@ def _restore_session_from_disk() -> bool:
     """Attempt to restore a full session from disk autosave (ZIP + editor state).
 
     Called at the start of main() before the sidebar renders.
+    Shows a confirmation prompt before restoring so users don't silently
+    receive another user's session in multi-user deployments.
     Returns True if a session was restored, False otherwise.
     """
     if "parsed_docs" in st.session_state:
         return False  # already loaded — nothing to do
+
+    # User already declined restore this session
+    if st.session_state.get("_autosave_declined"):
+        return False
 
     saved = find_latest_autosave()
     if not saved:
@@ -4141,6 +4161,24 @@ def _restore_session_from_disk() -> bool:
     upload_key = saved.get("upload_file_key", "")
     zip_path = _autosave_zip_path(upload_key)
     if not zip_path.exists():
+        return False
+
+    doc_name = saved.get("document_name", "Unknown")
+    saved_at = saved.get("saved_at", "")
+
+    # Show confirmation before restoring
+    if not st.session_state.get("_autosave_confirmed"):
+        st.info(f"📂 Found a previous session: **{doc_name}** (saved {saved_at[:16]})")
+        col_yes, col_no, _ = st.columns([1, 1, 4])
+        with col_yes:
+            if st.button("✅ Restore", key="restore_autosave_yes"):
+                st.session_state["_autosave_confirmed"] = True
+                st.rerun()
+        with col_no:
+            if st.button("❌ Start fresh", key="restore_autosave_no"):
+                st.session_state["_autosave_declined"] = True
+                st.rerun()
+        st.stop()
         return False
 
     # Re-parse from saved ZIP bytes

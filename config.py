@@ -26,7 +26,7 @@ LANGUAGE_MAPPING = {
     "DA": ["da"],
     "EL": ["el"],
     "ES": ["es"],
-    "ES_XL": ["es-xl"],     # Spanish (Betsson LatAm)
+    "ES_XL": ["es_xl"],     # Spanish (Betsson LatAm) - CRS uses underscore
     "ET": ["et"],
     "FI": ["fi"],
     "FR": ["fr"],
@@ -52,6 +52,19 @@ LANGUAGE_MAPPING = {
     "PE_EN": ["en-pe"],      # English for Peru
     "ET_ET": ["et"],         # Estonian for Estonia
     "ET_RU": ["ru-ee"],      # Russian for Estonia
+    # Duplicate/brand-specific codes (generated from source copies)
+    "EN_AB": ["en-ab"],      # English (ArcticBet) - duplicate from EN
+    "EN_BRM": ["en-brm"],    # English (BetSmith) - duplicate from EN
+    "EN_BS": ["en-bs"],      # English (BetSolid) - duplicate from EN
+}
+
+# Language duplication rules: when a source document is parsed and no dedicated
+# document exists for the target code, create a copy from the source.
+# This allows reviewing/editing each market's content individually in the QA tab.
+LANGUAGE_DUPLICATES = {
+    "EN": ["EN_AB", "EN_BRM", "EN_BS", "EN_TR"],  # English brands that use EN copy
+    "ARG": ["PY"],        # Paraguay uses ARG copy
+    "RU_ET": ["RU_LV"],   # Russian Latvia uses RU_ET copy
 }
 
 # Human-readable language names for display
@@ -117,6 +130,10 @@ LANGUAGE_NAMES = {
     "BT-LV": "Latvian",
     "BT-EE": "Estonian",
     "BT-GR": "Greek",
+    # Duplicate/brand-specific codes
+    "EN_AB": "English (ArcticBet)",
+    "EN_BRM": "English (BetSmith)",
+    "EN_BS": "English (BetSolid)",
 }
 
 # Language to Market mapping for audit report
@@ -169,6 +186,10 @@ LANGUAGE_TO_MARKET = {
     "PE_EN": "Peru",
     "ET_ET": "Estonia",
     "ET_RU": "Estonia",
+    # Duplicate/brand-specific codes
+    "EN_AB": "ArcticBet",
+    "EN_BRM": "BetSmith",
+    "EN_BS": "BetSolid",
 }
 
 # Template types and their content fields

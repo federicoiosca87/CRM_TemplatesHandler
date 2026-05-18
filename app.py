@@ -27,6 +27,7 @@ from config import (
     LANGUAGE_MAPPING,
     LANGUAGE_NAMES,
     LANGUAGE_TO_MARKET,
+    LANGUAGE_DUPLICATES,
     TASK_TYPES,
     REWARD_TYPES,
     BONUS_PRODUCTS,
@@ -1601,6 +1602,28 @@ def format_oms_image_option(display_name: str) -> str:
         return display_name
 
     return f"{display_name} | {' • '.join(tags)}"
+
+
+def expand_language_duplicates(parsed_docs: list[ParsedDocument]) -> list[ParsedDocument]:
+    """Create copies of documents for markets that use the same content.
+
+    Uses LANGUAGE_DUPLICATES config to determine which source language codes
+    should produce additional ParsedDocument entries for target markets.
+    Skips targets that already have a dedicated document in the parsed set.
+    """
+    existing_codes = {doc.language_code for doc in parsed_docs}
+    expanded = list(parsed_docs)
+
+    for doc in parsed_docs:
+        targets = LANGUAGE_DUPLICATES.get(doc.language_code, [])
+        for target_code in targets:
+            if target_code not in existing_codes:
+                dup = copy.deepcopy(doc)
+                dup.language_code = target_code
+                expanded.append(dup)
+                existing_codes.add(target_code)
+
+    return expanded
 
 
 def detect_offer_type(parsed_docs: list) -> dict:
@@ -4172,6 +4195,9 @@ def _restore_session_from_disk() -> bool:
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+    # Expand with duplicate markets
+    parsed_docs = expand_language_duplicates(parsed_docs)
+
     # Detect variants
     detected_variants = set()
     for doc in parsed_docs:
@@ -4472,6 +4498,9 @@ def main():
                         
                         # Parse all documents
                         parsed_docs = parse_documents_from_folder(docs_folder)
+
+                        # Expand with duplicate markets (e.g., EN -> EN_AB, EN_BRM, EN_BS, EN_TR)
+                        parsed_docs = expand_language_duplicates(parsed_docs)
                         
                         # Auto-detect variants from parsed templates
                         detected_variants = set()

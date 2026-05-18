@@ -397,6 +397,29 @@ def _find_tc_section_start(paragraphs: list[str], markers: list[str]) -> int:
     return -1
 
 
+def _is_tc_field_header(para_upper: str, markers: list[str]) -> bool:
+    """Check if a paragraph is a T&C field header (not just body text containing a marker).
+
+    Body text containing marker phrases (e.g., 'General Terms and Conditions apply.')
+    always starts with bullet characters. Headers are standalone formatted lines.
+    """
+    # Body text lines start with bullet markers — never treat as a header
+    if para_upper.lstrip().startswith(('•', '-', '–', '‣', '▪', '[LI]', '*')):
+        return False
+
+    # Strip trailing punctuation for comparison
+    cleaned = para_upper.rstrip(' .:;,–-')
+
+    for marker in markers:
+        # Exact match
+        if cleaned == marker:
+            return True
+        # Starts with marker and rest is short (combined headers like "FULL TERMS AND CONDITIONS")
+        if cleaned.startswith(marker) and len(cleaned) <= len(marker) + 25:
+            return True
+    return False
+
+
 def _parse_my_offers_section(paragraphs: list[str]) -> Optional[MyOffersSection]:
     """Parse MY OFFERS section for inbox content."""
     start = _find_section_start(paragraphs, SECTION_MARKERS["MY_OFFERS"])
@@ -1049,11 +1072,11 @@ def _parse_tc_section(paragraphs: list[str]) -> Optional[TcSection]:
         if any(para_upper.startswith(m) for m in tc_stop_markers):
             break
 
-        # Check for significant terms section
-        if any(marker in para_upper for marker in significant_markers):
+        # Check for significant terms section header (strict: must be a standalone header line)
+        if _is_tc_field_header(para_upper, significant_markers):
             current_field = "significant_terms"
-        # Check for full terms section
-        elif any(marker in para_upper for marker in full_terms_markers):
+        # Check for full terms section header (strict: must be a standalone header line)
+        elif _is_tc_field_header(para_upper, full_terms_markers):
             current_field = "terms_and_conditions"
         elif current_field and para_stripped:
             current_value = getattr(section, current_field) or ""
